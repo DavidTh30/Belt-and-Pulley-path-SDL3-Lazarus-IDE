@@ -43,7 +43,9 @@ const
     (name: 'Rose';            paper: (r: 255; g: 240; b: 244); ink: (r: 92;  g: 30;  b: 52);  accent: (r: 220; g: 60;  b: 110)));
 
 var
-  ThemeIdx: Integer = 0;
+  ThemeIdx: Integer = 2;          // ค่าตั้งต้น = Blueprint
+  { บันทึกเป็น SVG: ระหว่าง SvgBegin..SvgEnd ทุกคำสั่งวาดจะเขียนเป็นรูปเวกเตอร์แทนการวาดบนจอ }
+  SvgOn: Boolean = False;
 
 var
   Ren: PSDL_Renderer;
@@ -77,16 +79,121 @@ procedure DashedCircle(cx, cy, r: Single);
 procedure DashedLine(x1, y1, x2, y2: Single);
 procedure Panel(x, y, w, h: Single);
 procedure SetClip(x, y, w, h: Integer);
+procedure ClearClip;
+{ เส้นจุด (ตารางแบบ DASH) }
+procedure DotLine(x1, y1, x2, y2: Single);
+
+{ ---- SVG ---- }
+procedure SvgBegin(x, y, w, h: Single);
+function SvgEnd(const FileName: string): Boolean;
+{ รูปหลายเหลี่ยม (เติมสีแบบ even-odd ได้) ใช้ตอนบันทึก SVG แทนการเติมทีละแถว }
+procedure SvgPolygon(const P: TPtArr; count: Integer; evenOdd: Boolean);
+{ ภาพพื้นหลัง: อ้างถึงไฟล์ภาพ หมุนรอบจุดกลาง }
+procedure SvgImage(const path: string; x, y, w, h, angle, opacity: Single);
 
 implementation
 
 uses
-  SysUtils, Math;
+  Classes, SysUtils, Math;
 
 var
   Verts: array of TSDL_Vertex;
   VertN: Integer = 0;
   CurCol: TSDL_FColor;
+  CurHex: string = '#000000';
+  SvgL: TStringList = nil;
+  SvgFS: TFormatSettings;
+
+{ ---------- SVG helpers ---------- }
+
+function N(v: Single): string;
+begin
+  Result := FormatFloat('0.##', v, SvgFS);
+end;
+
+procedure Emit(const s: string);
+begin
+  if SvgL <> nil then SvgL.Add('  ' + s);
+end;
+
+function Esc(const s: string): string;
+begin
+  Result := StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+  Result := StringReplace(Result, '<', '&lt;', [rfReplaceAll]);
+  Result := StringReplace(Result, '>', '&gt;', [rfReplaceAll]);
+  Result := StringReplace(Result, '"', '&quot;', [rfReplaceAll]);
+end;
+
+function StrokeAttr(w: Single): string;
+begin
+  Result := Format('fill="none" stroke="%s" stroke-width="%s"', [CurHex, N(w)]);
+end;
+
+procedure SvgBegin(x, y, w, h: Single);
+begin
+  SvgFS := DefaultFormatSettings;
+  SvgFS.DecimalSeparator := '.';
+  FreeAndNil(SvgL);
+  SvgL := TStringList.Create;
+  SvgL.Add('<?xml version="1.0" encoding="UTF-8"?>');
+  SvgL.Add(Format('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+    'width="%s" height="%s" viewBox="%s %s %s %s">', [N(w), N(h), N(x), N(y), N(w), N(h)]));
+  SvgL.Add('  <!-- Belt and Pulley Path - vector export -->');
+  VertN := 0;
+  SvgOn := True;
+end;
+
+function SvgEnd(const FileName: string): Boolean;
+begin
+  Result := False;
+  SvgOn := False;
+  if SvgL = nil then Exit;
+  SvgL.Add('</svg>');
+  try
+    SvgL.SaveToFile(FileName);
+    Result := True;
+  finally
+    FreeAndNil(SvgL);
+  end;
+end;
+
+procedure SvgPolygon(const P: TPtArr; count: Integer; evenOdd: Boolean);
+var
+  i: Integer;
+  d, rule: string;
+begin
+  if (not SvgOn) or (count < 3) then Exit;
+  d := 'M' + N(P[0].x) + ' ' + N(P[0].y);
+  for i := 1 to count - 1 do
+    d := d + ' L' + N(P[i].x) + ' ' + N(P[i].y);
+  if evenOdd then rule := 'evenodd' else rule := 'nonzero';
+  Emit(Format('<path d="%s Z" fill="%s" fill-rule="%s"/>', [d, CurHex, rule]));
+end;
+
+procedure SvgImage(const path: string; x, y, w, h, angle, opacity: Single);
+var
+  href: string;
+begin
+  if not SvgOn then Exit;
+  href := 'file:///' + StringReplace(path, '\', '/', [rfReplaceAll]);
+  Emit(Format('<image xlink:href="%s" href="%s" x="%s" y="%s" width="%s" height="%s" opacity="%s" ' +
+    'preserveAspectRatio="none" transform="rotate(%s %s %s)"/>',
+    [Esc(href), Esc(href), N(x), N(y), N(w), N(h), N(opacity), N(angle), N(x + w / 2), N(y + h / 2)]));
+end;
+
+procedure PolyPoints(const P: array of TPt; filled: Boolean);
+var
+  i: Integer;
+  pts: string;
+begin
+  pts := '';
+  for i := 0 to High(P) do
+    pts := pts + N(P[i].x) + ',' + N(P[i].y) + ' ';
+  if filled then
+    Emit(Format('<polygon points="%s" fill="%s"/>', [Trim(pts), CurHex]))
+  else
+    Emit(Format('<polyline points="%s" %s/>', [Trim(pts), StrokeAttr(1)]));
+end;
 
 procedure SetTheme(i: Integer);
 begin
@@ -143,6 +250,11 @@ procedure FillRect(x, y, w, h: Single);
 var
   rc: TSDL_FRect;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<rect x="%s" y="%s" width="%s" height="%s" fill="%s"/>', [N(x), N(y), N(w), N(h), CurHex]));
+    Exit;
+  end;
   rc.x := x; rc.y := y; rc.w := w; rc.h := h;
   SDL_RenderFillRect(Ren, @rc);
 end;
@@ -151,17 +263,24 @@ procedure StrokeRect(x, y, w, h: Single);
 var
   rc: TSDL_FRect;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<rect x="%s" y="%s" width="%s" height="%s" %s/>', [N(x + 0.5), N(y + 0.5), N(w - 1), N(h - 1), StrokeAttr(1)]));
+    Exit;
+  end;
   rc.x := x; rc.y := y; rc.w := w; rc.h := h;
   SDL_RenderRect(Ren, @rc);
 end;
 
 procedure ColRaw(r, g, b: Byte);
 begin
-  SDL_SetRenderDrawColor(Ren, r, g, b, 255);
+  CurHex := Format('#%.2x%.2x%.2x', [r, g, b]);
   CurCol.r := r / 255;
   CurCol.g := g / 255;
   CurCol.b := b / 255;
   CurCol.a := 1;
+  if not SvgOn then
+    SDL_SetRenderDrawColor(Ren, r, g, b, 255);
 end;
 
 procedure Ink;   begin Col(22, 22, 22); end;
@@ -181,29 +300,53 @@ end;
 
 procedure Tri(x1, y1, x2, y2, x3, y3: Single);
 begin
+  if SvgOn then
+  begin
+    PolyPoints([Pt(x1, y1), Pt(x2, y2), Pt(x3, y3)], True);
+    Exit;
+  end;
   AddV(x1, y1); AddV(x2, y2); AddV(x3, y3);
 end;
 
 procedure Quad(const a, b, c, d: TPt);   // a-b ขอบหนึ่ง, d-c อีกขอบ
 begin
+  if SvgOn then
+  begin
+    PolyPoints([a, b, c, d], True);
+    Exit;
+  end;
   Tri(a.x, a.y, b.x, b.y, c.x, c.y);
   Tri(a.x, a.y, c.x, c.y, d.x, d.y);
 end;
 
 procedure Flush;
 begin
-  if VertN > 0 then
+  if (VertN > 0) and not SvgOn then
     SDL_RenderGeometry(Ren, nil, @Verts[0], VertN, nil, 0);
   VertN := 0;
 end;
 
 procedure Txt(x, y: Single; const s: string);
 begin
+  if SvgOn then
+  begin
+    if Trim(s) <> '' then
+      Emit(Format('<text x="%s" y="%s" fill="%s" font-family="Consolas, Menlo, monospace" font-size="9.5" ' +
+        'textLength="%s" lengthAdjust="spacingAndGlyphs" xml:space="preserve">%s</text>',
+        [N(x), N(y + 7.5), CurHex, N(Length(s) * 8), Esc(s)]));
+    Exit;
+  end;
   SDL_RenderDebugText(Ren, x, y, PAnsiChar(s));
 end;
 
 procedure Line(x1, y1, x2, y2: Single);
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1" stroke-linecap="round"/>',
+      [N(x1), N(y1), N(x2), N(y2), CurHex]));
+    Exit;
+  end;
   SDL_RenderLine(Ren, x1, y1, x2, y2);
 end;
 
@@ -211,6 +354,12 @@ procedure ThickLine(x1, y1, x2, y2, w: Single);
 var
   dx, dy, L: Single;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="%s"/>',
+      [N(x1), N(y1), N(x2), N(y2), CurHex, N(w)]));
+    Exit;
+  end;
   dx := x2 - x1; dy := y2 - y1;
   L := Hypot(dx, dy);
   if L < 1e-4 then Exit;
@@ -222,14 +371,19 @@ end;
 
 procedure Disc(cx, cy, r: Single);
 var
-  k, n: Integer;
+  k, n_: Integer;
   a0, a1: Single;
 begin
-  n := Max(10, Round(r * 3));
-  for k := 0 to n - 1 do
+  if SvgOn then
   begin
-    a0 := 2 * Pi * k / n;
-    a1 := 2 * Pi * (k + 1) / n;
+    Emit(Format('<circle cx="%s" cy="%s" r="%s" fill="%s"/>', [N(cx), N(cy), N(r), CurHex]));
+    Exit;
+  end;
+  n_ := Max(10, Round(r * 3));
+  for k := 0 to n_ - 1 do
+  begin
+    a0 := 2 * Pi * k / n_;
+    a1 := 2 * Pi * (k + 1) / n_;
     Tri(cx, cy, cx + r * Cos(a0), cy + r * Sin(a0), cx + r * Cos(a1), cy + r * Sin(a1));
   end;
   Flush;
@@ -238,14 +392,28 @@ end;
 { แถบโค้งหนาระหว่างรัศมี r1..r2 จากมุม a0 ถึง a1 }
 procedure ArcBand(cx, cy, r1, r2, a0, a1: Single);
 var
-  k, n: Integer;
+  k, n_: Integer;
   b0, b1: Single;
+  P: array of TPt;
 begin
-  n := Max(2, Ceil(Abs(a1 - a0) * r2 / 2.5));
-  for k := 0 to n - 1 do
+  n_ := Max(2, Ceil(Abs(a1 - a0) * r2 / 2.5));
+  if SvgOn then
   begin
-    b0 := a0 + (a1 - a0) * k / n;
-    b1 := a0 + (a1 - a0) * (k + 1) / n;
+    { แถบโค้งเป็นรูปเดียว: ขอบนอกไป แล้วขอบในกลับ }
+    SetLength(P, 2 * (n_ + 1));
+    for k := 0 to n_ do
+    begin
+      b0 := a0 + (a1 - a0) * k / n_;
+      P[k] := Pt(cx + r2 * Cos(b0), cy + r2 * Sin(b0));
+      P[2 * n_ + 1 - k] := Pt(cx + r1 * Cos(b0), cy + r1 * Sin(b0));
+    end;
+    PolyPoints(P, True);
+    Exit;
+  end;
+  for k := 0 to n_ - 1 do
+  begin
+    b0 := a0 + (a1 - a0) * k / n_;
+    b1 := a0 + (a1 - a0) * (k + 1) / n_;
     Quad(Pt(cx + r1 * Cos(b0), cy + r1 * Sin(b0)), Pt(cx + r1 * Cos(b1), cy + r1 * Sin(b1)),
          Pt(cx + r2 * Cos(b1), cy + r2 * Sin(b1)), Pt(cx + r2 * Cos(b0), cy + r2 * Sin(b0)));
   end;
@@ -254,14 +422,26 @@ end;
 
 procedure ArcLine(cx, cy, r, a0, a1: Single);
 var
-  k, n: Integer;
+  k, n_: Integer;
   b0, b1: Single;
+  P: array of TPt;
 begin
-  n := Max(2, Ceil(Abs(a1 - a0) * r / 3));
-  for k := 0 to n - 1 do
+  n_ := Max(2, Ceil(Abs(a1 - a0) * r / 3));
+  if SvgOn then
   begin
-    b0 := a0 + (a1 - a0) * k / n;
-    b1 := a0 + (a1 - a0) * (k + 1) / n;
+    SetLength(P, n_ + 1);
+    for k := 0 to n_ do
+    begin
+      b0 := a0 + (a1 - a0) * k / n_;
+      P[k] := Pt(cx + r * Cos(b0), cy + r * Sin(b0));
+    end;
+    PolyPoints(P, False);
+    Exit;
+  end;
+  for k := 0 to n_ - 1 do
+  begin
+    b0 := a0 + (a1 - a0) * k / n_;
+    b1 := a0 + (a1 - a0) * (k + 1) / n_;
     Line(cx + r * Cos(b0), cy + r * Sin(b0), cx + r * Cos(b1), cy + r * Sin(b1));
   end;
 end;
@@ -270,11 +450,11 @@ procedure RoundRectPts(x, y, w, h, rad: Single; out P: TPtArr);
 const
   SEG = 5;
 var
-  k, c, n: Integer;
+  k, c, n_: Integer;
   cx, cy, a: Single;
 begin
   SetLength(P, 4 * (SEG + 1));
-  n := 0;
+  n_ := 0;
   for c := 0 to 3 do
   begin
     case c of
@@ -286,8 +466,8 @@ begin
     for k := 0 to SEG do
     begin
       a := -Pi / 2 + (c + k / SEG) * Pi / 2;
-      P[n] := Pt(cx + rad * Cos(a), cy + rad * Sin(a));
-      Inc(n);
+      P[n_] := Pt(cx + rad * Cos(a), cy + rad * Sin(a));
+      Inc(n_);
     end;
   end;
 end;
@@ -297,6 +477,12 @@ var
   P: TPtArr;
   i, j: Integer;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" fill="%s"/>',
+      [N(x), N(y), N(w), N(h), N(rad), CurHex]));
+    Exit;
+  end;
   RoundRectPts(x, y, w, h, rad, P);
   for i := 0 to High(P) do
   begin
@@ -311,6 +497,12 @@ var
   P: TPtArr;
   i, j: Integer;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<rect x="%s" y="%s" width="%s" height="%s" rx="%s" %s/>',
+      [N(x), N(y), N(w), N(h), N(rad), StrokeAttr(1)]));
+    Exit;
+  end;
   RoundRectPts(x, y, w, h, rad, P);
   for i := 0 to High(P) do
   begin
@@ -345,6 +537,12 @@ var
 begin
   segs := Max(16, Round(r * 2 * Pi / 7));
   if Odd(segs) then Inc(segs);
+  if SvgOn then
+  begin
+    Emit(Format('<circle cx="%s" cy="%s" r="%s" %s stroke-dasharray="%s %s"/>',
+      [N(cx), N(cy), N(r), StrokeAttr(1), N(2 * Pi * r / segs), N(2 * Pi * r / segs)]));
+    Exit;
+  end;
   for k := 0 to segs - 1 do
     if not Odd(k) then
       ArcLine(cx, cy, r, 2 * Pi * k / segs, 2 * Pi * (k + 1) / segs);
@@ -353,16 +551,42 @@ end;
 procedure DashedLine(x1, y1, x2, y2: Single);
 var
   L, t0, t1: Single;
-  k, n: Integer;
+  k, n_: Integer;
 begin
+  if SvgOn then
+  begin
+    Emit(Format('<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1" stroke-dasharray="4 4"/>',
+      [N(x1), N(y1), N(x2), N(y2), CurHex]));
+    Exit;
+  end;
   L := Hypot(x2 - x1, y2 - y1);
-  n := Max(1, Round(L / 4));
-  for k := 0 to n - 1 do
+  n_ := Max(1, Round(L / 4));
+  for k := 0 to n_ - 1 do
     if not Odd(k) then
     begin
-      t0 := k / n; t1 := (k + 1) / n;
+      t0 := k / n_; t1 := (k + 1) / n_;
       Line(x1 + (x2 - x1) * t0, y1 + (y2 - y1) * t0, x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1);
     end;
+end;
+
+procedure DotLine(x1, y1, x2, y2: Single);
+var
+  L, t: Single;
+  k, n_: Integer;
+begin
+  if SvgOn then
+  begin
+    Emit(Format('<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1" stroke-dasharray="1 3"/>',
+      [N(x1), N(y1), N(x2), N(y2), CurHex]));
+    Exit;
+  end;
+  L := Hypot(x2 - x1, y2 - y1);
+  n_ := Max(1, Floor(L / 4));
+  for k := 0 to n_ do
+  begin
+    t := k / n_;
+    SDL_RenderPoint(Ren, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+  end;
 end;
 
 procedure Panel(x, y, w, h: Single);
@@ -377,8 +601,15 @@ procedure SetClip(x, y, w, h: Integer);
 var
   rc: TSDL_Rect;
 begin
+  if SvgOn then Exit;
   rc.x := x; rc.y := y; rc.w := w; rc.h := h;
   SDL_SetRenderClipRect(Ren, @rc);
+end;
+
+procedure ClearClip;
+begin
+  if SvgOn then Exit;
+  SDL_SetRenderClipRect(Ren, nil);
 end;
 
 end.

@@ -157,6 +157,7 @@ var
   ImgOff0Y: Single = 0;
   RoadFilters: array[0..1] of TSDL_DialogFileFilter;
   PngFilters: array[0..0] of TSDL_DialogFileFilter;
+  SvgFilters: array[0..0] of TSDL_DialogFileFilter;
 
 
 { ================= math helpers ================= }
@@ -866,14 +867,7 @@ begin
           if GridStyle = 1 then
             Line(gx, y0, gx, y1)
           else
-          begin
-            gy := DBG_Y + 4;
-            while gy < y1 do
-            begin
-              SDL_RenderPoint(Ren, gx, gy);
-              gy := gy + 4;
-            end;
-          end;
+            DotLine(gx, DBG_Y + 4, gx, y1);
           gx := gx + st;
         end;
         gy := GRID_OY + st;
@@ -882,14 +876,7 @@ begin
           if GridStyle = 1 then
             Line(x0, gy, x1, gy)
           else
-          begin
-            gx := DBG_X + 4;
-            while gx < x1 do
-            begin
-              SDL_RenderPoint(Ren, gx, gy);
-              gx := gx + 4;
-            end;
-          end;
+            DotLine(DBG_X + 4, gy, x1, gy);
           gy := gy + st;
         end;
       end;
@@ -951,6 +938,11 @@ var
 begin
   if (BgTex = nil) or (BgW <= 0) or (BgH <= 0) then Exit;
   dst := BgDstRect(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2);
+  if SvgOn then
+  begin
+    SvgImage(ImagePath, dst.x, dst.y, dst.w, dst.h, ImageAngle, EnsureRange(ImageOpacity, 0, 100) / 100);
+    Exit;
+  end;
   SDL_SetTextureAlphaMod(BgTex, Round(EnsureRange(ImageOpacity, 0, 100) * 2.55));
   SDL_RenderTextureRotated(Ren, BgTex, nil, @dst, ImageAngle, nil, SDL_FLIP_NONE);
 end;
@@ -1182,8 +1174,8 @@ begin
     DrawSpokes;
   DrawBeltTicks;
   DrawPaint(DBG_X, DBG_Y, 1, Max(BeltT, 2) + 2);
-  DrawBrush;
-  SDL_SetRenderClipRect(Ren, nil);
+  if not SvgOn then DrawBrush;      // ไม่ใส่วงพู่กันลงไฟล์ SVG
+  ClearClip;
 
   w := Pill(DBG_X + 16, DBG_Y + 16, 'VIEW', False);
   if ShowDebug then
@@ -1220,7 +1212,10 @@ begin
     for i := 0 to PolyN - 1 do
       RPoly[i] := ToRen(Poly[i]);
     Ink;
-    FillPolyEvenOdd(RPoly, PolyN, REN_Y + 1, REN_Y + REN_H - 2);
+    if SvgOn then
+      SvgPolygon(RPoly, PolyN, True)    // เวกเตอร์: รูปหลายเหลี่ยม even-odd รูปเดียว
+    else
+      FillPolyEvenOdd(RPoly, PolyN, REN_Y + 1, REN_Y + REN_H - 2);
     DrawPaint(REN_X + REN_OX, REN_Y + REN_OY, REN_SCALE, 3);
     for i := 0 to NodeCnt - 1 do
     begin
@@ -1230,7 +1225,7 @@ begin
       Txt(c.x - Length(s) * 4, c.y - 4, s);
     end;
   end;
-  SDL_SetRenderClipRect(Ren, nil);
+  ClearClip;
   Pill(REN_X + 16, REN_Y + 16, 'RENDER', True);
 end;
 
@@ -1774,6 +1769,46 @@ begin
   end;
 end;
 
+{ ส่งออกแผงเป็นภาพเวกเตอร์ SVG: 0 = View DEBUG, 1 = View OUTLINE, 2 = RENDER, 3 = Topology
+  วาดแผงนั้นซ้ำในโหมดบันทึก SVG ด้วยสีของธีมปัจจุบัน }
+procedure ExportSvg(kind: Integer; const fn: string);
+var
+  oldDebug, ok: Boolean;
+begin
+  BuildPoly;
+  oldDebug := ShowDebug;
+  ok := False;
+  try
+    case kind of
+      0, 1:
+        begin
+          ShowDebug := kind = 0;
+          SvgBegin(DBG_X, DBG_Y, DBG_W, DBG_H);
+          DrawDebugPanel;
+        end;
+      2:
+        begin
+          SvgBegin(REN_X, REN_Y, REN_W, REN_H);
+          DrawRenderPanel;
+        end;
+    else
+      begin
+        SvgBegin(TOP_X, TOP_Y, TOP_W, TOP_H);
+        DrawTopoPanel;
+      end;
+    end;
+    ok := SvgEnd(fn);
+  except
+    on Ex: Exception do
+    begin
+      SvgOn := False;
+      ShowError('Export SVG', 'Cannot save ' + fn + LineEnding + Ex.Message);
+    end;
+  end;
+  ShowDebug := oldDebug;
+  if not ok then Exit;
+end;
+
 procedure AfterLoad;
 begin
   SelNode := -1;
@@ -1920,6 +1955,15 @@ begin
   SDL_ShowSaveFileDialog(@DialogCallback, Pointer(4), Win, @RoadFilters[0], 2, PAnsiChar(UTF8String(DlgDir)));
 end;
 
+procedure DoExportSvg(kind: Integer);
+begin
+  if DlgBusy then Exit;
+  if DocFile <> '' then DlgDir := ExtractFilePath(DocFile) else DlgDir := ExtractFilePath(ParamStr(0));
+  DlgBusy := True;
+  SDL_ShowSaveFileDialog(@DialogCallback, Pointer(PtrInt(6 + kind)), Win, @SvgFilters[0], 1,
+    PAnsiChar(UTF8String(DlgDir)));
+end;
+
 procedure DoBakeImage;
 begin
   if DlgBusy or (BgTex = nil) then Exit;
@@ -1953,6 +1997,12 @@ begin
   SetCodePage(u, CP_UTF8, False);
   fn := u;
   if fn = '' then Exit;           // ยกเลิก
+  if (k >= 6) and (k <= 9) then
+  begin
+    if LowerCase(ExtractFileExt(fn)) <> '.svg' then fn := fn + '.svg';
+    ExportSvg(k - 6, fn);
+    Exit;
+  end;
   if k = 4 then
   begin
     if ExtractFileExt(fn) = '' then fn := fn + '.json';
@@ -2426,6 +2476,7 @@ begin
     uaImageOpen: DoOpenImage;
     uaImageBake: DoBakeImage;
     uaExportRoad: DoExportRoad;
+    uaExportSvg: DoExportSvg(PickedExport);
     uaTheme:
       begin
         SetTheme(PickedTheme);
@@ -2524,6 +2575,8 @@ begin
   RoadFilters[1].pattern := 'csv';
   PngFilters[0].Name := 'PNG image (*.png)';
   PngFilters[0].pattern := 'png';
+  SvgFilters[0].Name := 'SVG vector image (*.svg)';
+  SvgFilters[0].pattern := 'svg';
 
   { ฉากตั้งต้นของเอกสารใหม่ = รูปทรงเริ่มต้นเดิม }
   for hit := 0 to DEF_COUNT - 1 do

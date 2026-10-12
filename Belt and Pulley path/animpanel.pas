@@ -39,7 +39,7 @@ type
                uaAddPulley, uaDelPulley, uaHook, uaUnhook, uaPulleyEdit,
                uaGridChanged, uaImageOpen, uaImageClear, uaImageChanged,
                uaSaveAs, uaColorChanged, uaAnimToggled,
-               uaExportRoad, uaImageBake, uaTheme);
+               uaExportRoad, uaImageBake, uaTheme, uaExportSvg);
 
 const
   { สีของพู่กัน: 0 = ยางลบ }
@@ -85,6 +85,7 @@ var
   ImageMoveOn: Boolean = False;  // โหมดลากภาพพื้นหลังใน View (ปุ่ม MOVE ในแผง IMAGE)
   PickedColor: Integer = 1;  // สีที่คลิก (ใช้กับ uaColor)
   PickedTheme: Integer = 0;  // ธีมที่เลือกจากเมนู Theme (ใช้กับ uaTheme)
+  PickedExport: Integer = 0; // 0 debug, 1 outline, 2 render, 3 topology (ใช้กับ uaExportSvg)
 
 procedure DrawMenuBar;
 { สีพู่กันช่อง i (0 = ยางลบ, 1..6 = PaintPalette ของเอกสาร) }
@@ -120,14 +121,16 @@ type
 
 const
   { เมนู }
-  MENU_TITLE: array[0..2] of string = ('File', 'Panel', 'Theme');
-  MENU_X: array[0..2] of Single = (4, 56, 116);
-  MENU_W: array[0..2] of Single = (48, 56, 56);
-  MENU_ITEMS: array[0..7] of string = ('New', 'Open...', 'Save', 'Save As...', '', 'Export Road...', '', 'Exit');
-  MENU_KEYS: array[0..7] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', '', 'Ctrl+E', '', 'Alt+F4');
-  MENU_ACT: array[0..7] of TUiAction = (uaNew, uaOpen, uaSave, uaSaveAs, uaNone, uaExportRoad, uaNone, uaExit);
+  MENU_TITLE: array[0..3] of string = ('File', 'Panel', 'Theme', 'Export');
+  MENU_X: array[0..3] of Single = (4, 56, 116, 176);
+  MENU_W: array[0..3] of Single = (48, 56, 56, 64);
+  MENU_ITEMS: array[0..5] of string = ('New', 'Open...', 'Save', 'Save As...', '', 'Exit');
+  MENU_KEYS: array[0..5] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', '', 'Alt+F4');
+  MENU_ACT: array[0..5] of TUiAction = (uaNew, uaOpen, uaSave, uaSaveAs, uaNone, uaExit);
+  EXPORT_ITEMS: array[0..5] of string = ('Road (JSON / CSV)...', '', 'View Debug (SVG)...',
+                                         'View Outline (SVG)...', 'Render (SVG)...', 'Topology (SVG)...');
   PANEL_ITEMS: array[0..3] of string = ('Grid', 'Image', 'Color', 'Animation');
-  DD_W = 230;
+  DD_W = 250;
   DD_ROW = 22;
 
   { แผง }
@@ -564,8 +567,9 @@ begin
   case m of
     0: Result := Length(MENU_ITEMS);
     1: Result := Length(PANEL_ITEMS);
+    2: Result := Length(THEMES);
   else
-    Result := Length(THEMES);
+    Result := Length(EXPORT_ITEMS);
   end;
 end;
 
@@ -574,8 +578,9 @@ begin
   case m of
     0: Result := MENU_ITEMS[i];
     1: Result := PANEL_ITEMS[i];
+    2: Result := THEMES[i].name;
   else
-    Result := THEMES[i].name;
+    Result := EXPORT_ITEMS[i];
   end;
 end;
 
@@ -583,6 +588,7 @@ function MenuKey(m, i: Integer): string;
 begin
   Result := '';
   if m = 0 then Result := MENU_KEYS[i];
+  if (m = 3) and (i = 0) then Result := 'Ctrl+E';
 end;
 
 { รายการในเมนู Panel ที่ติ๊กอยู่ (แผงเปิดอยู่) }
@@ -666,7 +672,7 @@ begin
     end
     else
       Ink;
-    if MenuIdx >= 1 then
+    if (MenuIdx = 1) or (MenuIdx = 2) then
     begin
       { ช่องติ๊ก }
       StrokeRect(x + 12, y + 6, 10, 10);
@@ -1611,6 +1617,16 @@ begin
       begin
         PickedTheme := i;
         act := uaTheme;
+      end
+      else if c = 3 then
+      begin
+        if i = 0 then
+          act := uaExportRoad
+        else
+        begin
+          PickedExport := i - 2;
+          act := uaExportSvg;
+        end;
       end
       else
         case i of
