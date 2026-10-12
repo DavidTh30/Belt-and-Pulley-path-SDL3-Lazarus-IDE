@@ -30,7 +30,7 @@ program BeltPulley;
 {$APPTYPE GUI}
 
 uses
-  SDL3, SDL3_image, Classes, SysUtils, Math, Gfx, DemoScript, AnimPanel;
+  SDL3, SDL3_image, Classes, SysUtils, Math, Gfx, DemoScript, AnimPanel, GifAnim;
 
 const
   WIN_W = 1280;
@@ -65,6 +65,8 @@ type
   { หนึ่งช่วงของ belt ที่พันอยู่บน pulley
     s = -1 นูน / +1 เว้า (ใช้เป็นเครื่องหมายของรัศมี)
     phiIn/phiOut เก็บแบบไม่ wrap เพื่อให้รู้ทิศที่มุมเปลี่ยนอย่างต่อเนื่อง }
+  TMode = (mIdle, mPlay, mPaused, mRecord);
+
   TElem = record
     node, s: Integer;
     layer: Single;   // ชั้นปัจจุบัน (ค่อย ๆ เลื่อนเข้าหาลำดับจริง)
@@ -101,7 +103,7 @@ var
   Poly, RPoly: TPtArr;
   PolyN: Integer = 0;
 
-  Mode: (mIdle, mPlay, mPaused, mRecord) = mPlay;
+  Mode: TMode = mPlay;
   LoopOn: Boolean = True;
   DemoT: Single = 0;
   DemoDir: Integer = 1;
@@ -158,6 +160,8 @@ var
   RoadFilters: array[0..1] of TSDL_DialogFileFilter;
   PngFilters: array[0..0] of TSDL_DialogFileFilter;
   SvgFilters: array[0..0] of TSDL_DialogFileFilter;
+  GifFilters: array[0..0] of TSDL_DialogFileFilter;
+  Capturing: Boolean = False;     // กำลังเรนเดอร์เฟรมลง GIF (ไม่วาดวงพู่กัน)
 
 
 { ================= math helpers ================= }
@@ -1174,7 +1178,7 @@ begin
     DrawSpokes;
   DrawBeltTicks;
   DrawPaint(DBG_X, DBG_Y, 1, Max(BeltT, 2) + 2);
-  if not SvgOn then DrawBrush;      // ไม่ใส่วงพู่กันลงไฟล์ SVG
+  if not SvgOn and not Capturing then DrawBrush;      // ไม่ใส่วงพู่กันลงไฟล์ SVG / GIF
   ClearClip;
 
   w := Pill(DBG_X + 16, DBG_Y + 16, 'VIEW', False);
@@ -1184,6 +1188,7 @@ begin
     Pill(DBG_X + 16 + w + 4, DBG_Y + 16, 'OUTLINE', True);
   w := Pill(DBG_X + 16, DBG_Y + 36, 'NODE', False);
   Pill(DBG_X + 16 + w + 4, DBG_Y + 36, IntToStr(PathN), True);
+  if not (SvgOn or Capturing) then      // ป้ายสถานะไม่ใส่ในไฟล์ที่ส่งออก
   case Mode of
     mPlay:   Pill(DBG_X + DBG_W - 16 - 4 * 8 - 12, DBG_Y + 16, 'PLAY', True);
     mPaused: Pill(DBG_X + DBG_W - 16 - 5 * 8 - 12, DBG_Y + 16, 'PAUSE', True);
@@ -1983,6 +1988,8 @@ begin
     PAnsiChar(UTF8String(DlgDir)), False);
 end;
 
+procedure ExportGif(kind: Integer; const fn: string); forward;
+
 procedure PollDialog;
 var
   k: LongInt;
@@ -1997,6 +2004,12 @@ begin
   SetCodePage(u, CP_UTF8, False);
   fn := u;
   if fn = '' then Exit;           // ยกเลิก
+  if (k = 12) or (k = 13) then
+  begin
+    if LowerCase(ExtractFileExt(fn)) <> '.gif' then fn := fn + '.gif';
+    ExportGif(k - 12, fn);
+    Exit;
+  end;
   if (k >= 6) and (k <= 9) then
   begin
     if LowerCase(ExtractFileExt(fn)) <> '.svg' then fn := fn + '.svg';
@@ -2080,6 +2093,180 @@ begin
   EnsureSelVisible;
   Modified := True;
   PauseAt(PhaseStart(Sel) + Phases[Sel].dur);
+end;
+
+{ ---------- ส่งออกแอนิเมชันเป็น GIF ---------- }
+
+procedure MoveBelt(dt: Single); forward;
+
+{ แถบความคืบหน้าบนหน้าต่าง คืน False ถ้าผู้ใช้กด Esc / ปิดหน้าต่าง }
+function GifProgress(done, total: Integer): Boolean;
+var
+  ev: TSDL_Event;
+  x, y, w: Single;
+begin
+  Result := True;
+  SDL_SetRenderTarget(Ren, nil);
+  SDL_SetRenderViewport(Ren, nil);
+  x := WIN_W / 2 - 220;
+  y := SCENE_Y + 300;
+  w := 440;
+  Col(200, 200, 195);
+  FillRoundRect(x + 4, y + 4, w, 84, 8);
+  Panel(x, y, w, 84);
+  Pill(x + 16, y + 12, 'EXPORT GIF', True);
+  Ink;
+  Txt(x + 120, y + 16, Format('frame %d / %d', [done, total]));
+  Col(200, 200, 195);
+  FillRect(x + 16, y + 40, w - 32, 12);
+  Col(220, 90, 20);
+  FillRect(x + 16, y + 40, (w - 32) * done / Max(1, total), 12);
+  Col(130, 130, 125);
+  Txt(x + 16, y + 62, 'Esc = cancel');
+  SDL_RenderPresent(Ren);
+  while SDL_PollEvent(@ev) do
+    if (ev._type = SDL_EVENT_QUIT) or ((ev._type = SDL_EVENT_KEY_DOWN) and (ev.key.key = SDLK_ESCAPE)) then
+      Result := False;
+end;
+
+{ kind 0 = ฉากทั้งหมด (View + RENDER + Topology), 1 = เฉพาะ View
+  เล่นสคริปต์ตั้งแต่ต้น 20 เฟรม/วินาที (LOOP เปิด = เล่นไปแล้วย้อนกลับ ให้ GIF วนต่อเนื่อง)
+  ถ้าไม่มีคำสั่งแต่ belt วิ่งอยู่ = บันทึก belt วิ่งครบหนึ่งรอบ }
+procedure ExportGif(kind: Integer; const fn: string);
+const
+  FPS = 20;
+var
+  times: array of Single;
+  i, n, fwd: Integer;
+  dur: Single;
+  gif: TGifStream;
+  tgt: PSDL_Texture;
+  surf, conv: PSDL_Surface;
+  crop: TSDL_Rect;
+  oldMode: TMode;
+  oldT, oldOff: Single;
+  cancelled, ok: Boolean;
+begin
+  if ScriptLen > 0 then
+  begin
+    fwd := Ceil(ScriptLen * FPS);
+    SetLength(times, 0);
+    for i := 0 to fwd do
+    begin
+      SetLength(times, Length(times) + 1);
+      times[High(times)] := Min(ScriptLen, i / FPS);
+    end;
+    if LoopOn then
+      for i := fwd - 1 downto 1 do
+      begin
+        SetLength(times, Length(times) + 1);
+        times[High(times)] := i / FPS;
+      end;
+  end
+  else if BeltRun and (BeltLen > 1) and (Abs(BeltSpeed) > 0.5) then
+  begin
+    dur := Min(15, BeltLen / Abs(BeltSpeed));      // belt วิ่งครบหนึ่งรอบ = วนต่อเนื่องพอดี
+    SetLength(times, Max(2, Round(dur * FPS)));
+    for i := 0 to High(times) do times[i] := 0;
+  end
+  else
+  begin
+    ShowError('Export GIF', 'Nothing to animate.' + LineEnding +
+      'Add animation commands (or REC), or run the belt (BELT > RUN).');
+    Exit;
+  end;
+  n := Length(times);
+
+  if kind = 0 then
+  begin
+    crop.x := 0; crop.y := 0; crop.w := WIN_W; crop.h := SCENE_H;
+  end
+  else
+  begin
+    crop.x := DBG_X; crop.y := DBG_Y; crop.w := DBG_W; crop.h := DBG_H;
+  end;
+
+  oldMode := Mode;
+  oldT := DemoT;
+  oldOff := OffF;
+  StopRecording;
+  UiCancelEdit;
+  cancelled := False;
+  ok := False;
+  gif := nil;
+  tgt := SDL_CreateTexture(Ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, WIN_W, SCENE_H);
+  if tgt = nil then
+  begin
+    ShowError('Export GIF', string(SDL_GetError));
+    Exit;
+  end;
+  Capturing := True;
+  try
+    try
+      gif := TGifStream.Create(fn, crop.w, crop.h, 0);
+      ResetAll;
+      OffF := oldOff;
+      for i := 0 to n - 1 do
+      begin
+        if ScriptLen > 0 then
+          FollowScript(times[i]);
+        if i > 0 then MoveBelt(1 / FPS);
+        BuildPoly;
+        SDL_SetRenderTarget(Ren, tgt);
+        SDL_SetRenderViewport(Ren, nil);
+        Paper;
+        SDL_RenderClear(Ren);
+        DrawTicks;
+        DrawDebugPanel;
+        DrawRenderPanel;
+        DrawTopoPanel;
+        surf := SDL_RenderReadPixels(Ren, @crop);
+        if surf = nil then raise Exception.Create(string(SDL_GetError));
+        conv := SDL_ConvertSurface(surf, SDL_PIXELFORMAT_ARGB8888);
+        SDL_DestroySurface(surf);
+        if conv = nil then raise Exception.Create(string(SDL_GetError));
+        gif.AddFrame(conv^.pixels, conv^.pitch, 100 div FPS);
+        SDL_DestroySurface(conv);
+        if (i mod 4 = 0) or (i = n - 1) then
+          if not GifProgress(i + 1, n) then
+          begin
+            cancelled := True;
+            Break;
+          end;
+      end;
+      ok := not cancelled;
+    except
+      on Ex: Exception do
+        ShowError('Export GIF', 'Cannot save ' + fn + LineEnding + Ex.Message);
+    end;
+  finally
+    FreeAndNil(gif);
+    SDL_SetRenderTarget(Ren, nil);
+    SDL_DestroyTexture(tgt);
+    Capturing := False;
+  end;
+  if not ok then
+    DeleteFile(fn);
+
+  { กลับสภาพเดิม }
+  ResetAll;
+  OffF := oldOff;
+  if ScriptLen > 0 then
+  begin
+    DemoT := EnsureRange(oldT, 0, ScriptLen);
+    if oldMode = mPlay then Mode := mPlay else Mode := mPaused;
+  end
+  else
+    Mode := mIdle;
+end;
+
+procedure DoExportGif(kind: Integer);
+begin
+  if DlgBusy then Exit;
+  if DocFile <> '' then DlgDir := ExtractFilePath(DocFile) else DlgDir := ExtractFilePath(ParamStr(0));
+  DlgBusy := True;
+  SDL_ShowSaveFileDialog(@DialogCallback, Pointer(PtrInt(12 + kind)), Win, @GifFilters[0], 1,
+    PAnsiChar(UTF8String(DlgDir)));
 end;
 
 { ---------- แผง PULLEY ---------- }
@@ -2476,7 +2663,11 @@ begin
     uaImageOpen: DoOpenImage;
     uaImageBake: DoBakeImage;
     uaExportRoad: DoExportRoad;
-    uaExportSvg: DoExportSvg(PickedExport);
+    uaExportSvg:
+      if PickedExport <= 3 then
+        DoExportSvg(PickedExport)
+      else
+        DoExportGif(PickedExport - 5);      // 5 = ฉาก, 6 = View
     uaTheme:
       begin
         SetTheme(PickedTheme);
@@ -2577,6 +2768,8 @@ begin
   PngFilters[0].pattern := 'png';
   SvgFilters[0].Name := 'SVG vector image (*.svg)';
   SvgFilters[0].pattern := 'svg';
+  GifFilters[0].Name := 'Animated GIF (*.gif)';
+  GifFilters[0].pattern := 'gif';
 
   { ฉากตั้งต้นของเอกสารใหม่ = รูปทรงเริ่มต้นเดิม }
   for hit := 0 to DEF_COUNT - 1 do

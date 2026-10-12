@@ -85,7 +85,7 @@ var
   ImageMoveOn: Boolean = False;  // โหมดลากภาพพื้นหลังใน View (ปุ่ม MOVE ในแผง IMAGE)
   PickedColor: Integer = 1;  // สีที่คลิก (ใช้กับ uaColor)
   PickedTheme: Integer = 0;  // ธีมที่เลือกจากเมนู Theme (ใช้กับ uaTheme)
-  PickedExport: Integer = 0; // 0 debug, 1 outline, 2 render, 3 topology (ใช้กับ uaExportSvg)
+  PickedExport: Integer = 0; // 0 debug, 1 outline, 2 render, 3 topology (SVG), 5 ฉาก, 6 View (GIF)
 
 procedure DrawMenuBar;
 { สีพู่กันช่อง i (0 = ยางลบ, 1..6 = PaintPalette ของเอกสาร) }
@@ -127,10 +127,11 @@ const
   MENU_ITEMS: array[0..5] of string = ('New', 'Open...', 'Save', 'Save As...', '', 'Exit');
   MENU_KEYS: array[0..5] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', '', 'Alt+F4');
   MENU_ACT: array[0..5] of TUiAction = (uaNew, uaOpen, uaSave, uaSaveAs, uaNone, uaExit);
-  EXPORT_ITEMS: array[0..5] of string = ('Road (JSON / CSV)...', '', 'View Debug (SVG)...',
-                                         'View Outline (SVG)...', 'Render (SVG)...', 'Topology (SVG)...');
+  EXPORT_ITEMS: array[0..8] of string = ('Road (JSON / CSV)...', '', 'View Debug (SVG)...',
+                                         'View Outline (SVG)...', 'Render (SVG)...', 'Topology (SVG)...',
+                                         '', 'Animation (GIF)...', 'Animation View only (GIF)...');
   PANEL_ITEMS: array[0..3] of string = ('Grid', 'Image', 'Color', 'Animation');
-  DD_W = 250;
+  DD_W = 270;
   DD_ROW = 22;
 
   { แผง }

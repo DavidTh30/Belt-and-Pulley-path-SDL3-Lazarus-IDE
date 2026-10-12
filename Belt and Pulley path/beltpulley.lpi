@@ -84,6 +84,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="AnimPanel"/>
       </Unit>
+      <Unit>
+        <Filename Value="gifanim.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="GifAnim"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
