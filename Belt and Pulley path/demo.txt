@@ -1,0 +1,19 @@
+# Belt and Pulley Path - demo script
+#
+#   line  <node> <x> <y> <seconds>          move node in a straight line to (x, y)
+#   orbit <node> <center> <turns> <seconds> orbit node around node <center>
+#                                           (+turns = clockwise on screen)
+#   hold  <seconds>                         stand still
+#
+# Commands run one after another. The demo plays forward, then backward
+# to unwind the belt, then repeats. Coordinates are in window pixels.
+
+line  4 372 524 0.9     # pull 4 next to 5
+orbit 4 5 2.5 6.0       # wind 4 around 5 two and a half times
+line  4 150 330 1.2
+line  2 663 517 1.2     # bring 2 near 1
+orbit 2 1 1.0 3.0       # wind 2 around 1
+line  6 690 330 1.6
+line  5 470 610 1.6
+line  0 600 130 1.0
+hold  1.5
