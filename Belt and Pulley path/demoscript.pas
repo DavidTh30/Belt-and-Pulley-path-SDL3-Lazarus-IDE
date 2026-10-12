@@ -13,11 +13,14 @@ unit DemoScript;
 
   ข้อมูลฉาก/belt (ไม่ใส่ = ค่าตั้งต้น)
     pulleys <count>                          จำนวน pulley
-    belt thickness <t> color <r> <g> <b> speed <v> offset <f>
+    belt thickness <t> color <r> <g> <b> speed <v> offset <f> [run <0/1>]
     wrap   <node> <side> <layer> <sweepDeg> [joint]   สภาพการพันของ belt ตอนเริ่ม (ตามลำดับทาง)
     paint  <from> <to> <color>               ช่วงที่ทาสีบนเนื้อ belt (สัดส่วน 0..1 ของความยาว)
     grid   show <0/1> snap <0/1> step <px> style <0..3> color <r> <g> <b>
-    image  mode <fit|fill|stretch|center> opacity <0..100> path <ไฟล์ภาพ>   ภาพพื้นหลังของ View }
+    image  mode <fit|fill|stretch|center> opacity <0..100> [rotate <deg>] [scale <%>]
+           [offset <dx> <dy>] path <ไฟล์ภาพ>       ภาพพื้นหลังของ View
+    palette <r g b> x6                       สีพู่กันช่อง 1..6
+    view   color <r> <g> <b>                 สีพื้นของ View }
 
 {$mode objfpc}{$H+}
 
@@ -51,6 +54,10 @@ const
   DEFAULT_BELT_COLOR: TRgb = (r: 234; g: 234; b: 228);
   DEFAULT_GRID_COLOR: TRgb = (r: 170; g: 170; b: 165);
   IMAGE_MODE_NAME: array[0..3] of string = ('fit', 'fill', 'stretch', 'center');
+  DEFAULT_VIEW_COLOR: TRgb = (r: 252; g: 252; b: 250);
+  DEFAULT_PALETTE: array[1..6] of TRgb = (
+    (r: 215; g: 45; b: 35), (r: 235; g: 140; b: 20), (r: 225; g: 195; b: 20),
+    (r: 40; g: 150; b: 70), (r: 35; g: 95; b: 200), (r: 22; g: 22; b: 22));
 
 var
   Phases: array of TPhase;
@@ -62,6 +69,7 @@ var
   BeltColor: TRgb;
   BeltSpeedDoc: Single = 60;
   BeltOffset: Single = 0;
+  BeltRunDoc: Boolean = False;         // belt วิ่งอยู่ตอนบันทึก
   PaintCells: array of Byte;           // PAINT_N ช่อง, 0 = ไม่มีสี
   { ตารางและภาพพื้นหลังของ View }
   GridOn: Boolean = True;
@@ -72,6 +80,12 @@ var
   ImagePath: string = '';
   ImageMode: Integer = 0;              // 0 fit, 1 fill, 2 stretch, 3 center
   ImageOpacity: Integer = 60;          // เปอร์เซ็นต์
+  ImageAngle: Single = 0;              // หมุนภาพ (องศา ตามเข็มนาฬิกา)
+  ImageScale: Single = 100;            // ขยายภาพ (%)
+  ImageOffX: Single = 0;               // เลื่อนภาพ (px)
+  ImageOffY: Single = 0;
+  ViewColor: TRgb;                     // สีพื้นของ View
+  PaintPalette: array[1..6] of TRgb;   // สีพู่กัน (ช่อง 0 = ยางลบ)
 
 { ตั้งจำนวน pulley และฉากตั้งต้น แล้วล้างสคริปต์ }
 procedure InitScript(const dx, dy, dr: array of Single);
@@ -235,6 +249,8 @@ begin
 end;
 
 procedure ClearScript(empty: Boolean);
+var
+  i: Integer;
 begin
   SetLength(Phases, 0);
   if empty then
@@ -255,6 +271,11 @@ begin
   BeltColor := DEFAULT_BELT_COLOR;
   BeltSpeedDoc := 60;
   BeltOffset := 0;
+  BeltRunDoc := False;
+  ImageAngle := 0;
+  ImageScale := 100;
+  ImageOffX := 0;
+  ImageOffY := 0;
   SetLength(PaintCells, PAINT_N);
   FillChar(PaintCells[0], PAINT_N, 0);
   GridOn := True;
@@ -265,6 +286,9 @@ begin
   ImagePath := '';
   ImageMode := 0;
   ImageOpacity := 60;
+  ViewColor := DEFAULT_VIEW_COLOR;
+  for i := 1 to 6 do
+    PaintPalette[i] := DEFAULT_PALETTE[i];
   Recalc;
 end;
 
@@ -408,6 +432,7 @@ begin
       if key = 'thickness' then BeltThick := EnsureRange(v, 1, 12)
       else if key = 'speed' then BeltSpeedDoc := EnsureRange(v, -400, 400)
       else if key = 'offset' then BeltOffset := v - Floor(v)
+      else if key = 'run' then BeltRunDoc := v <> 0
       else Exit;
       Inc(i, 2);
     end
@@ -455,6 +480,7 @@ end;
 function ParseImage(const w: TStringArray; const rawLine: string): Boolean;
 var
   i, k, p: Integer;
+  d, d2: Double;
   key: string;
 begin
   Result := False;
@@ -485,6 +511,23 @@ begin
     begin
       if not TryStrToInt(w[i + 1], k) then Exit;
       ImageOpacity := EnsureRange(k, 0, 100);
+    end
+    else if key = 'rotate' then
+    begin
+      if not TryStrToFloat(w[i + 1], d, FS) then Exit;
+      ImageAngle := d - 360 * Floor(d / 360);
+    end
+    else if key = 'scale' then
+    begin
+      if not TryStrToFloat(w[i + 1], d, FS) then Exit;
+      ImageScale := EnsureRange(d, 5, 1000);
+    end
+    else if key = 'offset' then
+    begin
+      if (i + 2 > High(w)) or not TryStrToFloat(w[i + 1], d, FS) or not TryStrToFloat(w[i + 2], d2, FS) then Exit;
+      ImageOffX := d;
+      ImageOffY := d2;
+      Inc(i);                          // offset มี 2 ค่า
     end
     else
       Exit;
@@ -546,6 +589,29 @@ begin
       ok := ParseBelt(w)
     else if cmd = 'grid' then
       ok := ParseGrid(w)
+    else if (cmd = 'palette') and (Length(w) = 19) then
+    begin
+      ok := True;
+      for k := 0 to 17 do
+        if not TryStrToInt(w[k + 1], side_) or (side_ < 0) or (side_ > 255) then ok := False;
+      if ok then
+        for k := 0 to 5 do
+        begin
+          PaintPalette[k + 1].r := StrToInt(w[k * 3 + 1]);
+          PaintPalette[k + 1].g := StrToInt(w[k * 3 + 2]);
+          PaintPalette[k + 1].b := StrToInt(w[k * 3 + 3]);
+        end;
+    end
+    else if (cmd = 'view') and (Length(w) = 5) and (LowerCase(w[1]) = 'color') then
+    begin
+      ok := TryStrToInt(w[2], k) and TryStrToInt(w[3], node_) and TryStrToInt(w[4], side_);
+      if ok then
+      begin
+        ViewColor.r := EnsureRange(k, 0, 255);
+        ViewColor.g := EnsureRange(node_, 0, 255);
+        ViewColor.b := EnsureRange(side_, 0, 255);
+      end;
+    end
     else if cmd = 'image' then
       ok := ParseImage(w, Lines[i])
     else if (cmd = 'wrap') and (Length(w) in [5, 6]) then
@@ -650,8 +716,9 @@ begin
     for i := 0 to NodeCount - 1 do
       L.Add(Format('node   %d %s %s %s', [i, F(StartX[i]), F(StartY[i]), F(StartR[i])]));
     L.Add('');
-    L.Add(Format('belt thickness %s color %d %d %d speed %s offset %s',
-      [F(BeltThick), BeltColor.r, BeltColor.g, BeltColor.b, F(BeltSpeedDoc), FormatFloat('0.######', BeltOffset, FS)]));
+    L.Add(Format('belt thickness %s color %d %d %d speed %s offset %s run %d',
+      [F(BeltThick), BeltColor.r, BeltColor.g, BeltColor.b, F(BeltSpeedDoc), FormatFloat('0.######', BeltOffset, FS),
+       Ord(BeltRunDoc)]));
     for i := 0 to High(StartWraps) do
       with StartWraps[i] do
       begin
@@ -664,7 +731,13 @@ begin
     L.Add(Format('grid show %d snap %d step %s style %d color %d %d %d',
       [Ord(GridOn), Ord(GridSnap), F(GridStep), GridStyle, GridColor.r, GridColor.g, GridColor.b]));
     if ImagePath <> '' then
-      L.Add(Format('image mode %s opacity %d path %s', [IMAGE_MODE_NAME[ImageMode], ImageOpacity, ImagePath]));
+      L.Add(Format('image mode %s opacity %d rotate %s scale %s offset %s %s path %s',
+        [IMAGE_MODE_NAME[ImageMode], ImageOpacity, F(ImageAngle), F(ImageScale), F(ImageOffX), F(ImageOffY), ImagePath]));
+    L.Add(Format('view color %d %d %d', [ViewColor.r, ViewColor.g, ViewColor.b]));
+    t := 'palette';
+    for j := 1 to 6 do
+      t := t + Format(' %d %d %d', [PaintPalette[j].r, PaintPalette[j].g, PaintPalette[j].b]);
+    L.Add(t);
     { สี: เก็บเป็นช่วงต่อเนื่องที่สีเดียวกัน }
     i := 0;
     while i < Length(PaintCells) do

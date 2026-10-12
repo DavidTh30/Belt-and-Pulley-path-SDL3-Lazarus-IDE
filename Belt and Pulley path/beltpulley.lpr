@@ -17,7 +17,8 @@ program BeltPulley;
     R          : กลับไปจุดเริ่ม (STOP)
     D          : สลับ VIEW DEBUG / OUTLINE
     Del, Up/Dn : ลบ/เลือกคำสั่งในรายการ
-    Ctrl+N/O/S : New / Open / Save
+    Ctrl+N/O/S : New / Open / Save   (Ctrl+Shift+S = Save As)
+    Ctrl+E     : Export Road (เส้นทาง belt เป็น JSON/CSV สำหรับสร้างถนนในเกม)
     B          : belt วิ่ง/หยุด
     P          : เครื่องมือทาสี (ลากซ้าย = ทา, ลากขวา = ลบ)
     Esc        : ออก (ถามก่อนถ้ายังไม่บันทึก)
@@ -29,7 +30,7 @@ program BeltPulley;
 {$APPTYPE GUI}
 
 uses
-  SDL3, SDL3_image, SysUtils, Math, Gfx, DemoScript, AnimPanel;
+  SDL3, SDL3_image, Classes, SysUtils, Math, Gfx, DemoScript, AnimPanel;
 
 const
   WIN_W = 1280;
@@ -148,6 +149,14 @@ var
   BgW: Single = 0;
   BgH: Single = 0;
   BgMissing: Boolean = False;
+  { ลากภาพพื้นหลัง (โหมด MOVE) }
+  ImgDrag: Boolean = False;
+  ImgDragX0: Single = 0;
+  ImgDragY0: Single = 0;
+  ImgOff0X: Single = 0;
+  ImgOff0Y: Single = 0;
+  RoadFilters: array[0..1] of TSDL_DialogFileFilter;
+  PngFilters: array[0..0] of TSDL_DialogFileFilter;
 
 
 { ================= math helpers ================= }
@@ -908,36 +917,42 @@ begin
 end;
 
 { ภาพพื้นหลังของ View (อยู่ใต้ตาราง) }
-procedure DrawBackground;
+{ ตำแหน่งภาพพื้นหลังในกรอบ (vx, vy, vw, vh): โหมดพอดี + ขยาย + เลื่อน (หมุนรอบจุดกลางภาพ) }
+function BgDstRect(vx, vy, vw, vh: Single): TSDL_FRect;
 var
-  dst: TSDL_FRect;
-  vx, vy, vw, vh, sc: Single;
+  sc, k: Single;
 begin
-  if (BgTex = nil) or (BgW <= 0) or (BgH <= 0) then Exit;
-  vx := DBG_X + 1;
-  vy := DBG_Y + 1;
-  vw := DBG_W - 2;
-  vh := DBG_H - 2;
   case ImageMode of
     0: sc := Min(vw / BgW, vh / BgH);       // fit
     1: sc := Max(vw / BgW, vh / BgH);       // fill
-    3: sc := 1;                             // center
+    3: sc := 1;                             // center (ขนาดจริง)
   else
     sc := 0;                                // stretch
   end;
+  k := ImageScale / 100;
   if ImageMode = 2 then
   begin
-    dst.x := vx; dst.y := vy; dst.w := vw; dst.h := vh;
+    Result.w := vw * k;
+    Result.h := vh * k;
   end
   else
   begin
-    dst.w := BgW * sc;
-    dst.h := BgH * sc;
-    dst.x := vx + (vw - dst.w) / 2;
-    dst.y := vy + (vh - dst.h) / 2;
+    Result.w := BgW * sc * k;
+    Result.h := BgH * sc * k;
   end;
+  Result.x := vx + (vw - Result.w) / 2 + ImageOffX;
+  Result.y := vy + (vh - Result.h) / 2 + ImageOffY;
+end;
+
+{ ภาพพื้นหลังของ View (อยู่ใต้ตาราง) }
+procedure DrawBackground;
+var
+  dst: TSDL_FRect;
+begin
+  if (BgTex = nil) or (BgW <= 0) or (BgH <= 0) then Exit;
+  dst := BgDstRect(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2);
   SDL_SetTextureAlphaMod(BgTex, Round(EnsureRange(ImageOpacity, 0, 100) * 2.55));
-  SDL_RenderTexture(Ren, BgTex, nil, @dst);
+  SDL_RenderTextureRotated(Ren, BgTex, nil, @dst, ImageAngle, nil, SDL_FLIP_NONE);
 end;
 
 { ส่วนโค้งที่ belt พันอยู่: เส้นบางตามทางเดิน + แถบหนาด้านในของ pulley }
@@ -1029,7 +1044,7 @@ begin
     while (j < PAINT_N) and (PaintCells[j] = c) do Inc(j);
     s0 := (i / PAINT_N + OffF) * BeltLen;
     s1 := (j / PAINT_N + OffF) * BeltLen;
-    pc := PAINT_COLORS[c];
+    pc := PaintRgb(c);
     Col(pc.r, pc.g, pc.b);
     n := Max(1, Ceil((s1 - s0) / 3));
     for k := 0 to n do
@@ -1100,7 +1115,7 @@ begin
     Col(120, 120, 115)
   else
   begin
-    pc := PAINT_COLORS[PaintColor];
+    pc := PaintRgb(PaintColor);
     Col(pc.r, pc.g, pc.b);
   end;
   DashedCircle(MouseX, MouseY, BrushR + BeltT / 2);
@@ -1125,6 +1140,8 @@ var
   w: Single;
 begin
   Panel(DBG_X, DBG_Y, DBG_W, DBG_H);
+  Col(ViewColor.r, ViewColor.g, ViewColor.b);          // สีพื้นของ View (ตั้งในแผง COLOR)
+  FillRoundRect(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2, 6);
   SetClip(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2);
   DrawBackground;
   DrawGrid;
@@ -1573,6 +1590,147 @@ begin
   Result := True;
 end;
 
+{ บันทึกภาพพื้นหลังที่หมุน/ย่อ/เลื่อนแล้วเป็น PNG ขนาดเท่า View แล้วใช้ไฟล์นั้นเป็นพื้นหลังแทน }
+function BakeBackground(const fn: string): Boolean;
+var
+  tgt: PSDL_Texture;
+  surf: PSDL_Surface;
+  dst: TSDL_FRect;
+  vw, vh: Integer;
+begin
+  Result := False;
+  if BgTex = nil then Exit;
+  vw := DBG_W - 2;
+  vh := DBG_H - 2;
+  tgt := SDL_CreateTexture(Ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, vw, vh);
+  if tgt = nil then
+  begin
+    ShowError('Save as background', string(SDL_GetError));
+    Exit;
+  end;
+  SDL_SetRenderTarget(Ren, tgt);
+  SDL_SetRenderDrawColor(Ren, 0, 0, 0, 0);       // ส่วนที่ไม่มีภาพ = โปร่งใส
+  SDL_RenderClear(Ren);
+  dst := BgDstRect(0, 0, vw, vh);
+  SDL_SetTextureAlphaMod(BgTex, 255);
+  SDL_RenderTextureRotated(Ren, BgTex, nil, @dst, ImageAngle, nil, SDL_FLIP_NONE);
+  surf := SDL_RenderReadPixels(Ren, nil);
+  SDL_SetRenderTarget(Ren, nil);
+  SDL_DestroyTexture(tgt);
+  if surf = nil then
+  begin
+    ShowError('Save as background', string(SDL_GetError));
+    Exit;
+  end;
+  Result := IMG_SavePNG(surf, PAnsiChar(UTF8String(fn)));
+  SDL_DestroySurface(surf);
+  if not Result then
+    ShowError('Save as background', 'Cannot save ' + fn + LineEnding + string(SDL_GetError));
+end;
+
+{ ส่งออกเส้นทาง belt (เส้นกลาง) ไว้สร้างถนนในเกมขับรถ: JSON หรือ CSV ตามนามสกุลไฟล์
+  พิกัดเทียบมุมซ้ายบนของ View (x ไปขวา, y ลง) หน่วยพิกเซล เรียงตามทิศที่ belt วิ่ง }
+procedure ExportRoad(const fn: string);
+var
+  L: TStringList;
+  n, i, c, q: Integer;
+  p, d, pa, pb: TPt;
+  ss, a0, sw, rr: Single;
+  fs: TFormatSettings;
+  isCsv: Boolean;
+  sep, turn: string;
+
+  function F(v: Single): string;
+  begin
+    Result := FormatFloat('0.###', v, fs);
+  end;
+
+begin
+  if PathN < 2 then
+  begin
+    ShowError('Export Road', 'There is no belt to export.');
+    Exit;
+  end;
+  fs := DefaultFormatSettings;
+  fs.DecimalSeparator := '.';
+  BuildPoly;
+  n := Max(8, Round(BeltLen / 4));             // จุดห่างกันประมาณ 4 px
+  isCsv := LowerCase(ExtractFileExt(fn)) = '.csv';
+  L := TStringList.Create;
+  try
+    if isCsv then
+    begin
+      L.Add('s,x,y,heading_deg');
+      for i := 0 to n - 1 do
+      begin
+        ss := BeltLen * i / n;
+        PathPoint(ss, p, d);
+        L.Add(F(ss) + ',' + F(p.x - DBG_X) + ',' + F(p.y - DBG_Y) + ',' + F(ArcTan2(d.y, d.x) * 180 / Pi));
+      end;
+    end
+    else
+    begin
+      L.Add('{');
+      L.Add('  "format": "belt-road 1",');
+      L.Add('  "units": "px",');
+      L.Add('  "origin": "top-left of the View, x right, y down",');
+      L.Add('  "closed": true,');
+      L.Add('  "direction": "points follow the belt travel direction",');
+      L.Add('  "length": ' + F(BeltLen) + ',');
+      L.Add('  "width": ' + F(BeltT) + ',');
+      L.Add('  "point_spacing": ' + F(BeltLen / n) + ',');
+      L.Add('  "points": [');
+      for i := 0 to n - 1 do
+      begin
+        ss := BeltLen * i / n;
+        PathPoint(ss, p, d);
+        if i < n - 1 then sep := ',' else sep := '';
+        L.Add(Format('    [%s, %s, %s]%s', [F(p.x - DBG_X), F(p.y - DBG_Y), F(ArcTan2(d.y, d.x) * 180 / Pi), sep]));
+      end;
+      L.Add('  ],');
+      L.Add('  "segments": [');
+      for c := 0 to PathN - 1 do
+      begin
+        q := (c + 1) mod PathN;
+        { โค้งรอบ pulley: มุมเป็นทิศจากจุดศูนย์กลางไปยังเส้นกลางถนน }
+        a0 := Path[c].phiIn;
+        if Path[c].s < 0 then a0 := a0 + Pi;
+        sw := Path[c].phiOut - Path[c].phiIn;
+        rr := RadEff(Path[c]);
+        if sw > 0 then turn := 'right' else turn := 'left';     // y ชี้ลง: มุมเพิ่ม = ตามเข็ม = เลี้ยวขวา
+        L.Add(Format('    {"type": "arc", "pulley": %d, "center": [%s, %s], "radius": %s, ' +
+          '"start_deg": %s, "end_deg": %s, "sweep_deg": %s, "turn": "%s", "length": %s},',
+          [Path[c].node, F(Nodes[Path[c].node].x - DBG_X), F(Nodes[Path[c].node].y - DBG_Y), F(rr),
+           F(a0 * 180 / Pi), F((a0 + sw) * 180 / Pi), F(sw * 180 / Pi), turn, F(Abs(sw) * rr)]));
+        pa := ArcPoint(Path[c], 1);
+        pb := ArcPoint(Path[q], 0);
+        if c < PathN - 1 then sep := ',' else sep := '';
+        L.Add(Format('    {"type": "line", "from": [%s, %s], "to": [%s, %s], "length": %s}%s',
+          [F(pa.x - DBG_X), F(pa.y - DBG_Y), F(pb.x - DBG_X), F(pb.y - DBG_Y),
+           F(Hypot(pb.x - pa.x, pb.y - pa.y)), sep]));
+      end;
+      L.Add('  ],');
+      L.Add('  "pulleys": [');
+      for i := 0 to NodeCnt - 1 do
+      begin
+        if i < NodeCnt - 1 then sep := ',' else sep := '';
+        L.Add(Format('    {"id": %d, "x": %s, "y": %s, "r": %s}%s',
+          [i, F(Nodes[i].x - DBG_X), F(Nodes[i].y - DBG_Y), F(Nodes[i].r), sep]));
+      end;
+      L.Add('  ]');
+      L.Add('}');
+    end;
+    try
+      L.SaveToFile(fn);
+    except
+      on Ex: Exception do
+        ShowError('Export Road', 'Cannot save ' + fn + LineEnding + Ex.Message);
+    end;
+  finally
+    L.Free;
+  end;
+end;
+
 procedure AfterLoad;
 begin
   SelNode := -1;
@@ -1581,6 +1739,8 @@ begin
   BeltTTarget := BeltThick;
   BeltT := BeltThick;
   BeltSpeed := BeltSpeedDoc;
+  BeltRun := BeltRunDoc;
+  ImageMoveOn := False;
   OffF := BeltOffset;
   Modified := False;
   Sel := -1;
@@ -1622,6 +1782,7 @@ begin
     BeltThick := BeltTTarget;
     BeltSpeedDoc := BeltSpeed;
     BeltOffset := OffF;
+    BeltRunDoc := BeltRun;
     { ยังไม่มีแอนิเมชัน: บันทึกตำแหน่ง/ขนาด pulley และ belt ตามที่เห็นตอนนี้ }
     if Length(Phases) = 0 then
       CaptureStart;
@@ -1679,6 +1840,16 @@ begin
   SDL_ShowOpenFileDialog(@DialogCallback, Pointer(1), Win, @DlgFilters[0], 2, PAnsiChar(DlgDir), False);
 end;
 
+{ บันทึกเป็นไฟล์ใหม่เสมอ (ถามชื่อไฟล์) }
+procedure DoSaveAs;
+begin
+  if DlgBusy then Exit;
+  StopRecording;
+  if DocFile <> '' then DlgDir := ExtractFilePath(DocFile) else DlgDir := ExtractFilePath(ParamStr(0));
+  DlgBusy := True;
+  SDL_ShowSaveFileDialog(@DialogCallback, Pointer(2), Win, @DlgFilters[0], 2, PAnsiChar(UTF8String(DlgDir)));
+end;
+
 procedure DoSave;
 begin
   if DlgBusy then Exit;
@@ -1691,6 +1862,27 @@ begin
   DlgDir := ExtractFilePath(ParamStr(0));
   DlgBusy := True;
   SDL_ShowSaveFileDialog(@DialogCallback, Pointer(2), Win, @DlgFilters[0], 2, PAnsiChar(DlgDir));
+end;
+
+procedure DoExportRoad;
+begin
+  if DlgBusy then Exit;
+  if PathN < 2 then
+  begin
+    ShowError('Export Road', 'There is no belt to export.');
+    Exit;
+  end;
+  if DocFile <> '' then DlgDir := ExtractFilePath(DocFile) else DlgDir := ExtractFilePath(ParamStr(0));
+  DlgBusy := True;
+  SDL_ShowSaveFileDialog(@DialogCallback, Pointer(4), Win, @RoadFilters[0], 2, PAnsiChar(UTF8String(DlgDir)));
+end;
+
+procedure DoBakeImage;
+begin
+  if DlgBusy or (BgTex = nil) then Exit;
+  if ImagePath <> '' then DlgDir := ExtractFilePath(ImagePath) else DlgDir := ExtractFilePath(ParamStr(0));
+  DlgBusy := True;
+  SDL_ShowSaveFileDialog(@DialogCallback, Pointer(5), Win, @PngFilters[0], 1, PAnsiChar(UTF8String(DlgDir)));
 end;
 
 procedure DoOpenImage;
@@ -1718,6 +1910,30 @@ begin
   SetCodePage(u, CP_UTF8, False);
   fn := u;
   if fn = '' then Exit;           // ยกเลิก
+  if k = 4 then
+  begin
+    if ExtractFileExt(fn) = '' then fn := fn + '.json';
+    ExportRoad(fn);
+    Exit;
+  end;
+  if k = 5 then
+  begin
+    if LowerCase(ExtractFileExt(fn)) <> '.png' then fn := fn + '.png';
+    if BakeBackground(fn) and LoadBackground(fn, True) then
+    begin
+      { ภาพใหม่ตรงกับ View อยู่แล้ว: ไม่ต้องหมุน/ย่อ/เลื่อนอีก }
+      ImagePath := fn;
+      ImageMode := 3;
+      ImageAngle := 0;
+      ImageScale := 100;
+      ImageOffX := 0;
+      ImageOffY := 0;
+      ImageMoveOn := False;
+      Modified := True;
+      UpdateTitle;
+    end;
+    Exit;
+  end;
   if k = 3 then
   begin
     if LoadBackground(fn, True) then
@@ -2039,6 +2255,14 @@ begin
     uaNew: DoNew;
     uaOpen: DoOpen;
     uaSave: DoSave;
+    uaSaveAs: DoSaveAs;
+    uaColorChanged: Modified := True;
+    uaAnimToggled:
+      { ซ่อนแผง ANIMATION = หน้าต่างเตี้ยลงเหลือแค่ฉาก }
+      if AnimPanelOn then
+        SDL_SetWindowSize(Win, WIN_W, WIN_H)
+      else
+        SDL_SetWindowSize(Win, WIN_W, AP_Y);
     uaExit: if ConfirmDiscard then Running := False;
     uaPlay:
       if Mode = mPlay then
@@ -2157,6 +2381,8 @@ begin
     uaPulleyEdit: EditPulley(PulleyEditField, PulleyEditValue);
     uaGridChanged, uaImageChanged: Modified := True;
     uaImageOpen: DoOpenImage;
+    uaImageBake: DoBakeImage;
+    uaExportRoad: DoExportRoad;
     uaImageClear:
       begin
         ClearBackground;
@@ -2245,6 +2471,12 @@ begin
   ImgFilters[0].pattern := 'png;jpg;jpeg;bmp;gif;webp;tga;tif;tiff';
   ImgFilters[1].Name := 'All files';
   ImgFilters[1].pattern := '*';
+  RoadFilters[0].Name := 'Road JSON (*.json)';
+  RoadFilters[0].pattern := 'json';
+  RoadFilters[1].Name := 'Road points CSV (*.csv)';
+  RoadFilters[1].pattern := 'csv';
+  PngFilters[0].Name := 'PNG image (*.png)';
+  PngFilters[0].pattern := 'png';
 
   { ฉากตั้งต้นของเอกสารใหม่ = รูปทรงเริ่มต้นเดิม }
   for hit := 0 to DEF_COUNT - 1 do
@@ -2257,16 +2489,12 @@ begin
 
   { เปิด demo.txt ข้าง ๆ exe เป็นเอกสารแรก (สร้างให้ถ้ายังไม่มี) แล้วเล่นวนทันที }
   demoFile := ExtractFilePath(ParamStr(0)) + 'demo.txt';
-  EnsureDemoFile(demoFile);
-  if FileExists(demoFile) then
-    OpenFile(demoFile)
-  else
-    AfterLoad;
-  if ScriptLen > 0 then
-  begin
-    ResetAll;
-    Mode := mPlay;
-  end;
+  EnsureDemoFile(demoFile);      // ตัวอย่างยังอยู่ข้าง exe เปิดได้จาก File > Open
+  { เริ่มโปรแกรมด้วยเอกสารใหม่ (เหมือนเลือก File > New) }
+  ClearScript(True);
+  DocFile := '';
+  AfterLoad;
+  Mode := mIdle;
   UpdateTitle;
 
   Running := True;
@@ -2294,7 +2522,8 @@ begin
               case E.key.key of
                 SDLK_N: act := uaNew;
                 SDLK_O: act := uaOpen;
-                SDLK_S: act := uaSave;
+                SDLK_S: if shift then act := uaSaveAs else act := uaSave;
+                SDLK_E: act := uaExportRoad;
               end
             else if not UiKey(E.key.key, shift, act) then
               case E.key.key of
@@ -2314,6 +2543,11 @@ begin
             MouseX := sx;
             MouseY := sy;
             UiMouseMove(E.motion.x, E.motion.y, (E.motion.state and SDL_BUTTON_LMASK) <> 0, act);
+            if ImgDrag then
+            begin
+              ImageOffX := ImgOff0X + (sx - ImgDragX0);
+              ImageOffY := ImgOff0Y + (sy - ImgDragY0);
+            end;
             if Painting >= 0 then
               PaintAt(MouseX, MouseY, Painting);
           end;
@@ -2323,6 +2557,18 @@ begin
              and not UiOverFloat(E.button.x, E.button.y)
              and OnViewPill(E.button.x, E.button.y - SCENE_Y) then
             ShowDebug := not ShowDebug
+          else if ImageMoveOn and (BgTex <> nil) and (E.button.button = SDL_BUTTON_LEFT)
+             and (E.button.x >= DBG_X) and (E.button.x < DBG_X + DBG_W)
+             and (E.button.y >= SCENE_Y + DBG_Y) and (E.button.y < SCENE_Y + DBG_Y + DBG_H)
+             and not UiMenuOpen and not UiOverFloat(E.button.x, E.button.y) then
+          begin
+            { โหมด MOVE ของแผง IMAGE: ลากเพื่อเลื่อนภาพพื้นหลัง }
+            ImgDrag := True;
+            ImgDragX0 := E.button.x;
+            ImgDragY0 := E.button.y - SCENE_Y;
+            ImgOff0X := ImageOffX;
+            ImgOff0Y := ImageOffY;
+          end
           else if PaintOn and (E.button.button in [SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT])
              and (E.button.y >= SCENE_Y) and (E.button.y < SCENE_Y + DBG_Y + DBG_H)
              and (E.button.x < DBG_X + DBG_W) and not UiMenuOpen
@@ -2355,6 +2601,11 @@ begin
         SDL_EVENT_MOUSE_BUTTON_UP:
           begin
             Painting := -1;
+            if ImgDrag then
+            begin
+              ImgDrag := False;
+              Modified := True;
+            end;
             if E.button.button = SDL_BUTTON_LEFT then
             begin
               if DragIdx >= 0 then NeedCapture := True;

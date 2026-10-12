@@ -1,0 +1,35 @@
+# Belt and Pulley Path - example animation
+# open with File > Open, press Space (or PLAY) to run the animation, B to run the belt
+
+# Car engine serpentine belt: crank, AC, alternator, power steering,
+# water pump and idler on the back side, and a swinging tensioner
+pulleys 7
+node   0 420 520 75     # crankshaft
+node   1 180 560 45     # A/C compressor
+node   2 186 330 28     # idler (back side)
+node   3 250 140 40     # alternator
+node   4 465 130 45     # water pump (back side)
+node   5 680 180 45     # power steering
+node   6 578 420 35     # tensioner
+
+belt thickness 6 color 30 30 30 speed 150 offset 0 run 1
+wrap   3 -1 0 auto
+wrap   4 1 0 auto
+wrap   5 -1 0 auto
+wrap   6 1 0 auto
+wrap   0 -1 0 auto
+wrap   1 -1 0 auto
+wrap   2 1 0 auto
+grid show 1 snap 0 step 45 style 3 color 200 200 205
+view color 236 236 240
+palette 215 45 35 235 140 20 225 195 20 40 150 70 35 95 200 245 245 245
+paint  0.000000 0.015000 6
+paint  0.333000 0.348000 2
+paint  0.666000 0.681000 3
+
+line   6 548 448 1.0     # tensioner swings in
+line   6 578 420 1.0
+hold   0.5
+radius 0 85 0.8         # crank pulley swap
+radius 0 75 0.8
+hold   0.5

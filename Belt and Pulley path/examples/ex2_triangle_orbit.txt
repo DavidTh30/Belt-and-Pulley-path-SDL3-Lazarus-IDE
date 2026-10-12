@@ -1,0 +1,19 @@
+# Belt and Pulley Path - example animation
+# open with File > Open, press Space (or PLAY) to run the animation, B to run the belt
+
+# Triangle belt; a free pulley orbits around the top pulley and gets wrapped
+pulleys 4
+node   0 430 150 55
+node   1 700 560 55
+node   2 160 560 55
+node   3 430 430 30
+
+belt thickness 4 color 172 122 72 speed 60 offset 0 run 0
+wrap   0 -1 0 auto
+wrap   1 -1 0 auto
+wrap   2 -1 0 auto
+grid show 1 snap 0 step 45 style 1 color 210 210 205
+
+line   3 430 300 1.0     # move the free pulley under the top pulley
+orbit  3 0 1.0 5.0       # one full turn around pulley 0 -> the belt wraps it
+hold   1.0

@@ -37,7 +37,9 @@ type
                uaPaintTool, uaColor, uaBrushDn, uaBrushUp, uaClearPaint,
                uaBeltColor, uaSetStart,
                uaAddPulley, uaDelPulley, uaHook, uaUnhook, uaPulleyEdit,
-               uaGridChanged, uaImageOpen, uaImageClear, uaImageChanged);
+               uaGridChanged, uaImageOpen, uaImageClear, uaImageChanged,
+               uaSaveAs, uaColorChanged, uaAnimToggled,
+               uaExportRoad, uaImageBake);
 
 const
   { สีของพู่กัน: 0 = ยางลบ }
@@ -78,9 +80,14 @@ var
   { แผงลอย GRID / IMAGE (เปิดจากเมนู Panel) }
   GridPanelOn: Boolean = False;
   ImagePanelOn: Boolean = False;
+  ColorPanelOn: Boolean = False;
+  AnimPanelOn: Boolean = True;   // แผง ANIMATION ด้านล่าง (ซ่อนได้จากเมนู Panel)
+  ImageMoveOn: Boolean = False;  // โหมดลากภาพพื้นหลังใน View (ปุ่ม MOVE ในแผง IMAGE)
   PickedColor: Integer = 1;  // สีที่คลิก (ใช้กับ uaColor)
 
 procedure DrawMenuBar;
+{ สีพู่กันช่อง i (0 = ยางลบ, 1..6 = PaintPalette ของเอกสาร) }
+function PaintRgb(i: Integer): TRgb;
 procedure DrawBeltPanel;
 procedure DrawPulleyPanel;
 procedure DrawMenuDropdown;
@@ -115,11 +122,11 @@ const
   MENU_TITLE: array[0..1] of string = ('File', 'Panel');
   MENU_X: array[0..1] of Single = (4, 56);
   MENU_W: array[0..1] of Single = (48, 56);
-  MENU_ITEMS: array[0..4] of string = ('New', 'Open...', 'Save', '', 'Exit');
-  MENU_KEYS: array[0..4] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', '', 'Alt+F4');
-  MENU_ACT: array[0..4] of TUiAction = (uaNew, uaOpen, uaSave, uaNone, uaExit);
-  PANEL_ITEMS: array[0..1] of string = ('Grid', 'Image');
-  DD_W = 200;
+  MENU_ITEMS: array[0..7] of string = ('New', 'Open...', 'Save', 'Save As...', '', 'Export Road...', '', 'Exit');
+  MENU_KEYS: array[0..7] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', '', 'Ctrl+E', '', 'Alt+F4');
+  MENU_ACT: array[0..7] of TUiAction = (uaNew, uaOpen, uaSave, uaSaveAs, uaNone, uaExportRoad, uaNone, uaExit);
+  PANEL_ITEMS: array[0..3] of string = ('Grid', 'Image', 'Color', 'Animation');
+  DD_W = 230;
   DD_ROW = 22;
 
   { แผง }
@@ -276,6 +283,14 @@ end;
 const
   PULLEY_ROW = -2;
   P_FIELDS: array[0..2] of TField = (fX, fY, fR);
+
+function PaintRgb(i: Integer): TRgb;
+begin
+  if (i >= 1) and (i <= 6) then
+    Result := PaintPalette[i]
+  else
+    Result := PAINT_COLORS[0];
+end;
 
 function UiEditing: Boolean;
 begin
@@ -530,7 +545,7 @@ begin
   { ทาสี }
   SmallButton(TB_ITEMS[11], 'PAINT', UiPaint);
   for i := 12 to 18 do
-    Swatch(TB_ITEMS[i], PAINT_COLORS[TB_ITEMS[i].tag], UiPaint and (TB_ITEMS[i].tag = UiColor), TB_ITEMS[i].tag = 0);
+    Swatch(TB_ITEMS[i], PaintRgb(TB_ITEMS[i].tag), UiPaint and (TB_ITEMS[i].tag = UiColor), TB_ITEMS[i].tag = 0);
   Col(110, 110, 105);
   Txt(876, TB_TOP + 5, 'size');
   SmallButton(TB_ITEMS[19], '-', False);
@@ -562,7 +577,8 @@ end;
 { รายการในเมนู Panel ที่ติ๊กอยู่ (แผงเปิดอยู่) }
 function MenuChecked(m, i: Integer): Boolean;
 begin
-  Result := (m = 1) and (((i = 0) and GridPanelOn) or ((i = 1) and ImagePanelOn));
+  Result := (m = 1) and (((i = 0) and GridPanelOn) or ((i = 1) and ImagePanelOn)
+            or ((i = 2) and ColorPanelOn) or ((i = 3) and AnimPanelOn));
 end;
 
 function MenuTitleAt(x, y: Single): Integer;
@@ -1039,8 +1055,14 @@ end;
 const
   FP_W = 310;
   FP_H = 146;
+  FP_H_IMAGE = 196;
   FP_GRID = 0;
   FP_IMAGE = 1;
+  FP_COLOR = 2;
+  COLOR_TARGET: array[0..3] of string = ('BELT', 'PAINT', 'GRID', 'VIEW');
+  SL_X = 30;          // แถบเลื่อน R/G/B เริ่มที่ x+SL_X กว้าง SL_W
+  SL_W = 200;
+  SL_Y: array[0..2] of Single = (66, 88, 110);
   GRID_COLORS: array[0..5] of TRgb = (
     (r: 170; g: 170; b: 165), (r: 120; g: 120; b: 115), (r: 210; g: 210; b: 205),
     (r: 120; g: 160; b: 210), (r: 215; g: 130; b: 110), (r: 120; g: 180; b: 130));
@@ -1048,14 +1070,26 @@ const
   IMG_MODE_BTN: array[0..3] of string = ('FIT', 'FILL', 'STRETCH', 'CENTER');
 
 var
-  FpX: array[0..1] of Single = (531, 531);      // มุมขวาบนของ View ไม่บังป้าย VIEW/NODE
-  FpY: array[0..1] of Single = (SCENE_TOP + 70, SCENE_TOP + 230);
+  FpX: array[0..2] of Single = (531, 531, 531);      // มุมขวาของ View ไม่บังป้าย VIEW/NODE
+  FpY: array[0..2] of Single = (SCENE_TOP + 70, SCENE_TOP + 230, SCENE_TOP + 440);
+  ColorTarget: Integer = 0;       // 0 belt, 1 paint, 2 grid, 3 view
+  ColorDrag: Integer = -1;        // ช่องสีที่กำลังลากแถบ (0..2)
   FpDrag: Integer = -1;
   FpDragDX, FpDragDY: Single;
 
+function FpH(i: Integer): Single;
+begin
+  if i = FP_IMAGE then Result := FP_H_IMAGE else Result := FP_H;
+end;
+
 function FpVisible(i: Integer): Boolean;
 begin
-  if i = FP_GRID then Result := GridPanelOn else Result := ImagePanelOn;
+  case i of
+    FP_GRID: Result := GridPanelOn;
+    FP_IMAGE: Result := ImagePanelOn;
+  else
+    Result := ColorPanelOn;
+  end;
 end;
 
 function FpAt(x, y: Single): Integer;
@@ -1063,14 +1097,19 @@ var
   i: Integer;
 begin
   Result := -1;
-  for i := 1 downto 0 do      // IMAGE วาดทีหลัง = อยู่บน
-    if FpVisible(i) and InRect(x, y, FpX[i], FpY[i], FP_W, FP_H) then
+  for i := 2 downto 0 do      // วาดทีหลัง = อยู่บน
+    if FpVisible(i) and InRect(x, y, FpX[i], FpY[i], FP_W, FpH(i)) then
       Exit(i);
 end;
 
 procedure FpClose(i: Integer);
 begin
-  if i = FP_GRID then GridPanelOn := False else ImagePanelOn := False;
+  case i of
+    FP_GRID: GridPanelOn := False;
+    FP_IMAGE: ImagePanelOn := False;
+  else
+    ColorPanelOn := False;
+  end;
 end;
 
 procedure FpHeader(i: Integer; const title: string);
@@ -1080,8 +1119,8 @@ begin
   x := FpX[i];
   y := FpY[i];
   Col(200, 200, 195);
-  FillRoundRect(x + 4, y + 4, FP_W, FP_H, 7);     // เงา
-  Panel(x, y, FP_W, FP_H);
+  FillRoundRect(x + 4, y + 4, FP_W, FpH(i), 7);     // เงา
+  Panel(x, y, FP_W, FpH(i));
   Pill(x + 12, y + 10, title, True);
   Col(150, 150, 145);
   Txt(x + 30 + Length(title) * 8, y + 14, 'drag here');
@@ -1141,9 +1180,11 @@ var
   x, y: Single;
   i: Integer;
   s: string;
+  has: Boolean;
 begin
   x := FpX[FP_IMAGE];
   y := FpY[FP_IMAGE];
+  has := (UiImgName <> '') and not UiImgMissing;
   FpHeader(FP_IMAGE, 'IMAGE');
   Button(x + 12, y + 38, 76, 20, 'OPEN...', False, True);
   Button(x + 94, y + 38, 60, 20, 'CLEAR', False, UiImgName <> '');
@@ -1152,23 +1193,210 @@ begin
   if Length(s) > 17 then s := Copy(s, 1, 15) + '..';
   if UiImgMissing then Col(215, 45, 35) else Ink;
   Txt(x + 162, y + 44, s);
+
   Col(110, 110, 105);
   Txt(x + 12, y + 70, 'fit');
   for i := 0 to 3 do
     Button(x + 60 + i * 60, y + 64, 58, 20, IMG_MODE_BTN[i], ImageMode = i, True);
+
   Col(110, 110, 105);
   Txt(x + 12, y + 96, 'opacity');
-  Button(x + 84, y + 90, 20, 20, '-', False, True);
+  Button(x + 76, y + 90, 20, 20, '-', False, True);
   Ink;
-  Txt(x + 112, y + 96, Format('%3d %%', [ImageOpacity]));
-  Button(x + 164, y + 90, 20, 20, '+', False, True);
+  Txt(x + 100, y + 96, Format('%3d%%', [ImageOpacity]));
+  Button(x + 136, y + 90, 20, 20, '+', False, True);
+  Col(110, 110, 105);
+  Txt(x + 170, y + 96, 'scale');
+  Button(x + 214, y + 90, 20, 20, '-', False, True);
+  Ink;
+  Txt(x + 238, y + 96, Format('%3d%%', [Round(ImageScale)]));
+  Button(x + 278, y + 90, 20, 20, '+', False, True);
+
+  Col(110, 110, 105);
+  Txt(x + 12, y + 122, 'rotate');
+  Button(x + 66, y + 116, 36, 20, '-15', False, True);
+  Button(x + 106, y + 116, 28, 20, '-1', False, True);
+  Ink;
+  Txt(x + 140, y + 122, Format('%5.1f deg', [ImageAngle]));
+  Button(x + 222, y + 116, 28, 20, '+1', False, True);
+  Button(x + 254, y + 116, 36, 20, '+15', False, True);
+
+  Col(110, 110, 105);
+  Txt(x + 12, y + 148, 'move');
+  Button(x + 66, y + 142, 56, 20, 'MOVE', ImageMoveOn, has);
+  Button(x + 128, y + 142, 56, 20, 'RESET', False, has);
+  Col(110, 110, 105);
+  Txt(x + 192, y + 148, Format('%d, %d', [Round(ImageOffX), Round(ImageOffY)]));
+
+  Button(x + 12, y + 168, 100, 20, 'SAVE AS BG', False, has);
   Col(110, 110, 105);
   if UiImgMissing then
-    Txt(x + 12, y + 122, 'file not found')
+    Txt(x + 120, y + 174, 'file not found')
+  else if ImageMoveOn then
+    Txt(x + 120, y + 174, 'drag in View to move')
   else if UiImgW > 0 then
-    Txt(x + 12, y + 122, Format('%d x %d px  - shown behind the grid', [UiImgW, UiImgH]))
+    Txt(x + 120, y + 174, Format('%d x %d px', [UiImgW, UiImgH]))
   else
-    Txt(x + 12, y + 122, 'PNG / JPG / BMP ... as View background');
+    Txt(x + 120, y + 174, 'PNG / JPG / BMP ...');
+end;
+
+{ ---------- แผง COLOR ---------- }
+
+function PaintSlot: Integer;
+begin
+  if (UiColor >= 1) and (UiColor <= 6) then Result := UiColor else Result := 1;
+end;
+
+function TargetRgb: TRgb;
+begin
+  case ColorTarget of
+    0: Result := BeltColor;
+    1: Result := PaintPalette[PaintSlot];
+    2: Result := GridColor;
+  else
+    Result := ViewColor;
+  end;
+end;
+
+procedure SetTargetRgb(const c: TRgb);
+begin
+  case ColorTarget of
+    0: BeltColor := c;
+    1: PaintPalette[PaintSlot] := c;
+    2: GridColor := c;
+  else
+    ViewColor := c;
+  end;
+end;
+
+function Channel(const c: TRgb; ch: Integer): Integer;
+begin
+  case ch of
+    0: Result := c.r;
+    1: Result := c.g;
+  else
+    Result := c.b;
+  end;
+end;
+
+procedure SetChannel(ch, v: Integer);
+var
+  c: TRgb;
+begin
+  c := TargetRgb;
+  v := EnsureRange(v, 0, 255);
+  case ch of
+    0: c.r := v;
+    1: c.g := v;
+  else
+    c.b := v;
+  end;
+  SetTargetRgb(c);
+end;
+
+procedure DrawColorPanel;
+const
+  CH_NAME: array[0..2] of string = ('R', 'G', 'B');
+var
+  x, y, ty, kx: Single;
+  i, v: Integer;
+  c: TRgb;
+begin
+  x := FpX[FP_COLOR];
+  y := FpY[FP_COLOR];
+  FpHeader(FP_COLOR, 'COLOR');
+  Col(110, 110, 105);
+  Txt(x + 12, y + 44, 'for');
+  for i := 0 to 3 do
+    Button(x + 44 + i * 58, y + 38, 54, 20, COLOR_TARGET[i], ColorTarget = i, True);
+  c := TargetRgb;
+  for i := 0 to 2 do
+  begin
+    ty := y + SL_Y[i];
+    v := Channel(c, i);
+    Col(110, 110, 105);
+    Txt(x + 12, ty + 2, CH_NAME[i]);
+    Col(225, 225, 220);
+    FillRect(x + SL_X, ty + 2, SL_W, 8);
+    case i of
+      0: Col(215, 60, 50);
+      1: Col(60, 165, 80);
+    else
+      Col(50, 100, 210);
+    end;
+    FillRect(x + SL_X, ty + 2, SL_W * v / 255, 8);
+    Col(150, 150, 145);
+    StrokeRect(x + SL_X, ty + 2, SL_W, 8);
+    kx := x + SL_X + SL_W * v / 255;
+    Ink;
+    FillRect(kx - 2, ty - 1, 5, 14);
+    Txt(x + SL_X + SL_W + 10, ty + 2, Format('%3d', [v]));
+  end;
+  { ตัวอย่างสี }
+  Col(c.r, c.g, c.b);
+  FillRoundRect(x + 272, y + 64, 26, 56, 4);
+  Ink;
+  StrokeRoundRect(x + 272, y + 64, 26, 56, 4);
+  Ink;
+  Txt(x + 12, y + 130, Format('#%.2X%.2X%.2X', [c.r, c.g, c.b]));
+  Col(110, 110, 105);
+  case ColorTarget of
+    0: Txt(x + 96, y + 130, 'belt surface');
+    1: Txt(x + 96, y + 130, Format('paint swatch %d', [PaintSlot]));
+    2: Txt(x + 96, y + 130, 'grid lines');
+  else
+    Txt(x + 96, y + 130, 'View background');
+  end;
+end;
+
+{ ลากแถบสี: ค่าจากตำแหน่ง x }
+procedure ColorSlide(x: Single);
+begin
+  if ColorDrag < 0 then Exit;
+  SetChannel(ColorDrag, Round((x - FpX[FP_COLOR] - SL_X) / SL_W * 255));
+end;
+
+function ColorMouseDown(x, y: Single; var act: TUiAction): Boolean;
+var
+  i: Integer;
+  px, py: Single;
+begin
+  Result := True;
+  px := FpX[FP_COLOR];
+  py := FpY[FP_COLOR];
+  for i := 0 to 3 do
+    if InRect(x, y, px + 44 + i * 58, py + 38, 54, 20) then
+    begin
+      ColorTarget := i;
+      Exit;
+    end;
+  for i := 0 to 2 do
+    if InRect(x, y, px + SL_X - 4, py + SL_Y[i] - 3, SL_W + 8, 16) then
+    begin
+      ColorDrag := i;
+      ColorSlide(x);
+      act := uaColorChanged;
+      Exit;
+    end;
+end;
+
+function ColorWheel(x, y, dy: Single; shift: Boolean; var act: TUiAction): Boolean;
+var
+  i, stp: Integer;
+  px, py: Single;
+begin
+  Result := False;
+  if not ColorPanelOn then Exit;
+  px := FpX[FP_COLOR];
+  py := FpY[FP_COLOR];
+  for i := 0 to 2 do
+    if InRect(x, y, px + SL_X - 4, py + SL_Y[i] - 3, SL_W + 40, 16) then
+    begin
+      if shift then stp := 10 else stp := 1;
+      SetChannel(i, Channel(TargetRgb, i) + Round(Sign(dy)) * stp);
+      act := uaColorChanged;
+      Exit(True);
+    end;
 end;
 
 function UiOverFloat(x, y: Single): Boolean;
@@ -1180,6 +1408,7 @@ procedure DrawFloatPanels;
 begin
   if GridPanelOn then DrawGridPanel;
   if ImagePanelOn then DrawImagePanel;
+  if ColorPanelOn then DrawColorPanel;
 end;
 
 { คลิกในแผงลอย: คืน True ถ้าใช้เหตุการณ์ }
@@ -1203,6 +1432,11 @@ begin
     FpDrag := i;                         // ลากหัวแผงเพื่อย้าย
     FpDragDX := x - px;
     FpDragDY := y - py;
+    Exit;
+  end;
+  if i = FP_COLOR then
+  begin
+    ColorMouseDown(x, y, act);
     Exit;
   end;
   if i = FP_GRID then
@@ -1234,17 +1468,70 @@ begin
     if InRect(x, y, px + 12, py + 38, 76, 20) then act := uaImageOpen
     else if InRect(x, y, px + 94, py + 38, 60, 20) then
     begin
-      if UiImgName <> '' then act := uaImageClear;
+      if UiImgName <> '' then
+      begin
+        act := uaImageClear;
+        ImageMoveOn := False;
+      end;
     end
-    else if InRect(x, y, px + 84, py + 90, 20, 20) then
+    else if InRect(x, y, px + 76, py + 90, 20, 20) then
     begin
       ImageOpacity := Max(0, ImageOpacity - 10);
       act := uaImageChanged;
     end
-    else if InRect(x, y, px + 164, py + 90, 20, 20) then
+    else if InRect(x, y, px + 136, py + 90, 20, 20) then
     begin
       ImageOpacity := Min(100, ImageOpacity + 10);
       act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 214, py + 90, 20, 20) then
+    begin
+      ImageScale := Max(5, ImageScale - 5);
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 278, py + 90, 20, 20) then
+    begin
+      ImageScale := Min(1000, ImageScale + 5);
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 66, py + 116, 36, 20) then
+    begin
+      ImageAngle := ImageAngle - 15;
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 106, py + 116, 28, 20) then
+    begin
+      ImageAngle := ImageAngle - 1;
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 222, py + 116, 28, 20) then
+    begin
+      ImageAngle := ImageAngle + 1;
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 254, py + 116, 36, 20) then
+    begin
+      ImageAngle := ImageAngle + 15;
+      act := uaImageChanged;
+    end
+    else if InRect(x, y, px + 66, py + 142, 56, 20) then
+    begin
+      if (UiImgName <> '') and not UiImgMissing then ImageMoveOn := not ImageMoveOn;
+    end
+    else if InRect(x, y, px + 128, py + 142, 56, 20) then
+    begin
+      if (UiImgName <> '') and not UiImgMissing then
+      begin
+        ImageOffX := 0;
+        ImageOffY := 0;
+        ImageAngle := 0;
+        ImageScale := 100;
+        act := uaImageChanged;
+      end;
+    end
+    else if InRect(x, y, px + 12, py + 168, 100, 20) then
+    begin
+      if (UiImgName <> '') and not UiImgMissing then act := uaImageBake;
     end
     else
       for k := 0 to 3 do
@@ -1253,11 +1540,13 @@ begin
           ImageMode := k;
           act := uaImageChanged;
         end;
+    ImageAngle := ImageAngle - 360 * Floor(ImageAngle / 360);
   end;
 end;
 
 procedure DrawAnimPanel;
 begin
+  if not AnimPanelOn then Exit;
   Panel(AP_X, AP_Y, AP_W, AP_H);
   Pill(AP_X + 16, TB_Y, 'ANIMATION', True);
   DrawTransport;
@@ -1294,10 +1583,17 @@ begin
     if i >= 0 then
       if c = 0 then
         act := MENU_ACT[i]
-      else if i = 0 then
-        GridPanelOn := not GridPanelOn
       else
-        ImagePanelOn := not ImagePanelOn
+        case i of
+          0: GridPanelOn := not GridPanelOn;
+          1: ImagePanelOn := not ImagePanelOn;
+          2: ColorPanelOn := not ColorPanelOn;
+        else
+          begin
+            AnimPanelOn := not AnimPanelOn;
+            act := uaAnimToggled;          // โปรแกรมหลักปรับความสูงหน้าต่าง
+          end;
+        end
     else if MenuTitleAt(x, y) >= 0 then
     begin
       if MenuTitleAt(x, y) <> c then MenuIdx := MenuTitleAt(x, y);
@@ -1333,7 +1629,7 @@ begin
   { แผง PULLEY }
   if PulleyMouseDown(x, y, act) then Exit(True);
 
-  if not InRect(x, y, AP_X, AP_Y, AP_W, AP_H) then
+  if not AnimPanelOn or not InRect(x, y, AP_X, AP_Y, AP_W, AP_H) then
   begin
     if UiCommitEdit then act := CommitAct;
     Exit(False);
@@ -1422,10 +1718,16 @@ begin
     end;
     Exit(True);
   end;
+  if (ColorDrag >= 0) and leftDown then
+  begin
+    ColorSlide(x);
+    act := uaColorChanged;
+    Exit(True);
+  end;
   if (FpDrag >= 0) and leftDown then
   begin
     FpX[FpDrag] := EnsureRange(x - FpDragDX, 0, 1280 - FP_W);
-    FpY[FpDrag] := EnsureRange(y - FpDragDY, MENU_H, AP_Y + AP_H - FP_H);
+    FpY[FpDrag] := EnsureRange(y - FpDragDY, MENU_H, AP_Y + AP_H - FpH(FpDrag));
     Exit(True);
   end;
   if Scrubbing and leftDown then
@@ -1443,6 +1745,7 @@ procedure UiMouseUp;
 begin
   Scrubbing := False;
   FpDrag := -1;
+  ColorDrag := -1;
 end;
 
 function UiWheel(x, y, dy: Single; shift: Boolean; out act: TUiAction): Boolean;
@@ -1453,9 +1756,10 @@ var
 begin
   act := uaNone;
   if MenuIdx >= 0 then Exit(True);
+  if (FpAt(x, y) = FP_COLOR) and ColorWheel(x, y, dy, shift, act) then Exit(True);
   if FpAt(x, y) >= 0 then Exit(True);       // ไม่ให้ล้อทะลุแผงลอยไปปรับรัศมี pulley
   if PulleyWheel(x, y, dy, shift, act) then Exit(True);
-  Result := InRect(x, y, AP_X, AP_Y, AP_W, AP_H);
+  Result := AnimPanelOn and InRect(x, y, AP_X, AP_Y, AP_W, AP_H);
   if not Result or UiRecording then Exit;
   if not InRect(x, y, LS_X, LS_Y, LS_W, ROWS * ROW_H + 2) then Exit;
 

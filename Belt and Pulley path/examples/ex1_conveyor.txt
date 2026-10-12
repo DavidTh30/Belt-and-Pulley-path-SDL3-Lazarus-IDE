@@ -1,0 +1,31 @@
+# Belt and Pulley Path - example animation
+# open with File > Open, press Space (or PLAY) to run the animation, B to run the belt
+
+# Flat conveyor: two drums and a tension idler pressing the return run
+pulleys 3
+node   0 160 360 70
+node   1 700 360 70
+node   2 430 445 25
+
+belt thickness 8 color 45 45 45 speed 90 offset 0 run 1
+wrap   0 -1 0 auto
+wrap   1 -1 0 auto
+wrap   2 1 0 auto
+grid show 1 snap 0 step 45 style 2 color 120 120 115
+view color 245 243 235
+paint  0.000000 0.030000 3
+paint  0.125000 0.155000 3
+paint  0.250000 0.280000 3
+paint  0.375000 0.405000 3
+paint  0.500000 0.530000 3
+paint  0.625000 0.655000 3
+paint  0.750000 0.780000 3
+paint  0.875000 0.905000 3
+
+line   2 430 510 1.5     # pull the idler down = more tension
+hold   1
+line   2 430 445 1.5
+radius 0 95 1.0         # bigger drive drum
+hold   0.5
+radius 0 70 1.0
+hold   1

@@ -1,0 +1,15 @@
+# Belt and Pulley Path - example animation
+# open with File > Open, press Space (or PLAY) to run the animation, B to run the belt
+
+# The scene from the original GIF: pulley 4 winds the belt around pulley 5
+# (no node lines = the default 9-pulley scene)
+
+belt thickness 3 color 234 234 228 speed 60 offset 0 run 0
+grid show 1 snap 0 step 45 style 0 color 170 170 165
+paint  0.000000 0.020000 1
+paint  0.500000 0.520000 5
+
+line   4 372 524 0.9     # pull 4 next to 5
+orbit  4 5 3.0 8.0       # three turns: the belt coils up
+line   4 200 330 1.2
+hold   1.5
