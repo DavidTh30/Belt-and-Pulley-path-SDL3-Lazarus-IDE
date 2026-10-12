@@ -94,8 +94,6 @@ procedure ClearScript(empty: Boolean = False);
 { โหลดไฟล์; คืน '' ถ้าเรียบร้อย หรือรายการบรรทัดที่ข้าม; ถ้าอ่านไฟล์ไม่ได้จะ raise }
 function LoadScriptFile(const FileName: string): string;
 procedure SaveScriptFile(const FileName: string);
-{ เขียนสคริปต์ตัวอย่างลงไฟล์ถ้ายังไม่มี }
-procedure EnsureDemoFile(const FileName: string);
 
 function NodeCount: Integer;
 procedure SetNodeCount(n: Integer);
@@ -121,27 +119,6 @@ implementation
 
 uses
   Classes, SysUtils, Math;
-
-const
-  DEFAULT_SCRIPT =
-    '# Belt and Pulley Path - animation script' + LineEnding +
-    '#' + LineEnding +
-    '#   node   <node> <x> <y> <r>               start position/radius (optional)' + LineEnding +
-    '#   line   <node> <x> <y> <seconds>          move in a straight line (eased)' + LineEnding +
-    '#   move   <node> <x> <y> <seconds>          move in a straight line (constant speed)' + LineEnding +
-    '#   orbit  <node> <center> <turns> <seconds> orbit around node <center> (+ = clockwise)' + LineEnding +
-    '#   radius <node> <r> <seconds>              change radius' + LineEnding +
-    '#   hold   <seconds>                         stand still' + LineEnding +
-    LineEnding +
-    'line  4 372 524 0.9     # pull 4 next to 5' + LineEnding +
-    'orbit 4 5 2.5 6.0       # wind 4 around 5 two and a half times' + LineEnding +
-    'line  4 150 330 1.2' + LineEnding +
-    'line  2 663 517 1.2     # bring 2 near 1' + LineEnding +
-    'orbit 2 1 1.0 3.0       # wind 2 around 1' + LineEnding +
-    'line  6 690 330 1.6' + LineEnding +
-    'line  5 470 610 1.6' + LineEnding +
-    'line  0 600 130 1.0' + LineEnding +
-    'hold  1.5' + LineEnding;
 
 var
   DefX, DefY, DefR: array of Single;
@@ -559,8 +536,8 @@ var
 
 begin
   Result := '';
+  ClearScript;                 // ฉากตั้งต้น 9 pulley (ไฟล์อาจเปลี่ยนด้วยบรรทัด pulleys)
   n := NodeCount;
-  ClearScript;
 
   for i := 0 to Lines.Count - 1 do
   begin
@@ -764,24 +741,6 @@ begin
           pkHold:   L.Add(Format('hold   %s', [F(dur)]));
         end;
     L.SaveToFile(FileName);
-  finally
-    L.Free;
-  end;
-end;
-
-procedure EnsureDemoFile(const FileName: string);
-var
-  L: TStringList;
-begin
-  if FileExists(FileName) then Exit;
-  L := TStringList.Create;
-  try
-    L.Text := DEFAULT_SCRIPT;
-    try
-      L.SaveToFile(FileName);
-    except
-      // เขียนไม่ได้ก็ข้ามไป
-    end;
   finally
     L.Free;
   end;

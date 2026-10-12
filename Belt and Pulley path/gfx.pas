@@ -20,11 +20,43 @@ type
     r, g, b: Byte;
   end;
 
+  { ธีมสี: สีเทาทั้งหมดของ UI ไล่ระหว่าง paper (พื้น) กับ ink (ตัวหนังสือ/เส้น)
+    และสีส้มที่ใช้เน้นจะเปลี่ยนเป็น accent ของธีม }
+  TTheme = record
+    name: string;
+    paper, ink, accent: TRgb;
+  end;
+
+const
+  THEMES: array[0..11] of TTheme = (
+    (name: 'Paper';           paper: (r: 252; g: 252; b: 250); ink: (r: 22;  g: 22;  b: 22);  accent: (r: 220; g: 90;  b: 20)),
+    (name: 'Dark';            paper: (r: 30;  g: 32;  b: 36);  ink: (r: 226; g: 226; b: 222); accent: (r: 255; g: 145; b: 60)),
+    (name: 'Blueprint';       paper: (r: 20;  g: 60;  b: 115); ink: (r: 232; g: 242; b: 255); accent: (r: 255; g: 212; b: 80)),
+    (name: 'Sepia';           paper: (r: 244; g: 234; b: 214); ink: (r: 72;  g: 50;  b: 30);  accent: (r: 190; g: 80;  b: 40)),
+    (name: 'Solarized Light'; paper: (r: 253; g: 246; b: 227); ink: (r: 7;   g: 54;  b: 66);  accent: (r: 203; g: 75;  b: 22)),
+    (name: 'Solarized Dark';  paper: (r: 0;   g: 43;  b: 54);  ink: (r: 238; g: 232; b: 213); accent: (r: 181; g: 137; b: 0)),
+    (name: 'Terminal';        paper: (r: 8;   g: 16;  b: 10);  ink: (r: 95;  g: 255; b: 130); accent: (r: 255; g: 200; b: 0)),
+    (name: 'Midnight';        paper: (r: 26;  g: 22;  b: 46);  ink: (r: 222; g: 212; b: 255); accent: (r: 255; g: 110; b: 200)),
+    (name: 'Mint';            paper: (r: 236; g: 248; b: 242); ink: (r: 18;  g: 72;  b: 62);  accent: (r: 0;   g: 150; b: 120)),
+    (name: 'High Contrast';   paper: (r: 0;   g: 0;   b: 0);   ink: (r: 255; g: 255; b: 255); accent: (r: 255; g: 255; b: 0)),
+    (name: 'Nord';            paper: (r: 46;  g: 52;  b: 64);  ink: (r: 236; g: 239; b: 244); accent: (r: 136; g: 192; b: 208)),
+    (name: 'Rose';            paper: (r: 255; g: 240; b: 244); ink: (r: 92;  g: 30;  b: 52);  accent: (r: 220; g: 60;  b: 110)));
+
+var
+  ThemeIdx: Integer = 0;
+
 var
   Ren: PSDL_Renderer;
 
 function Pt(x, y: Single): TPt;
+procedure SetTheme(i: Integer);
+function FindTheme(const name: string): Integer;
+{ สีของ UI: ผ่านธีม }
 procedure Col(r, g, b: Byte);
+{ สีตามจริง (สีที่ผู้ใช้เลือก: สีทา, ตัวอย่างสี) }
+procedure ColRaw(r, g, b: Byte);
+{ สีของเอกสาร: ถ้ายังเป็นค่าตั้งต้นให้ตามธีม ถ้าผู้ใช้ตั้งเองใช้ตามจริง }
+procedure ColDoc(const c, def: TRgb);
 procedure Ink;
 procedure Paper;
 procedure Tri(x1, y1, x2, y2, x3, y3: Single);
@@ -49,12 +81,57 @@ procedure SetClip(x, y, w, h: Integer);
 implementation
 
 uses
-  Math;
+  SysUtils, Math;
 
 var
   Verts: array of TSDL_Vertex;
   VertN: Integer = 0;
   CurCol: TSDL_FColor;
+
+procedure SetTheme(i: Integer);
+begin
+  ThemeIdx := EnsureRange(i, 0, High(THEMES));
+end;
+
+function FindTheme(const name: string): Integer;
+var
+  i: Integer;
+begin
+  Result := 0;
+  for i := 0 to High(THEMES) do
+    if SameText(THEMES[i].name, name) then Exit(i);
+end;
+
+procedure Col(r, g, b: Byte);
+var
+  t: Single;
+  th: TTheme;
+begin
+  th := THEMES[ThemeIdx];
+  if (r = 220) and (g = 90) and (b = 20) then
+  begin
+    ColRaw(th.accent.r, th.accent.g, th.accent.b);
+    Exit;
+  end;
+  if MaxValue([Integer(r), g, b]) - MinValue([Integer(r), g, b]) <= 24 then
+  begin
+    { สีเทา: 22 = ink, 252 = paper, ระหว่างนั้นไล่สี }
+    t := EnsureRange(((r + g + b) / 3 - 22) / 230, 0, 1);
+    ColRaw(Round(th.ink.r + (th.paper.r - th.ink.r) * t),
+           Round(th.ink.g + (th.paper.g - th.ink.g) * t),
+           Round(th.ink.b + (th.paper.b - th.ink.b) * t));
+    Exit;
+  end;
+  ColRaw(r, g, b);
+end;
+
+procedure ColDoc(const c, def: TRgb);
+begin
+  if (c.r = def.r) and (c.g = def.g) and (c.b = def.b) then
+    Col(c.r, c.g, c.b)
+  else
+    ColRaw(c.r, c.g, c.b);
+end;
 
 function Pt(x, y: Single): TPt;
 begin
@@ -78,7 +155,7 @@ begin
   SDL_RenderRect(Ren, @rc);
 end;
 
-procedure Col(r, g, b: Byte);
+procedure ColRaw(r, g, b: Byte);
 begin
   SDL_SetRenderDrawColor(Ren, r, g, b, 255);
   CurCol.r := r / 255;

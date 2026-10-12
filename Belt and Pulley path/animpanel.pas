@@ -39,7 +39,7 @@ type
                uaAddPulley, uaDelPulley, uaHook, uaUnhook, uaPulleyEdit,
                uaGridChanged, uaImageOpen, uaImageClear, uaImageChanged,
                uaSaveAs, uaColorChanged, uaAnimToggled,
-               uaExportRoad, uaImageBake);
+               uaExportRoad, uaImageBake, uaTheme);
 
 const
   { สีของพู่กัน: 0 = ยางลบ }
@@ -84,6 +84,7 @@ var
   AnimPanelOn: Boolean = True;   // แผง ANIMATION ด้านล่าง (ซ่อนได้จากเมนู Panel)
   ImageMoveOn: Boolean = False;  // โหมดลากภาพพื้นหลังใน View (ปุ่ม MOVE ในแผง IMAGE)
   PickedColor: Integer = 1;  // สีที่คลิก (ใช้กับ uaColor)
+  PickedTheme: Integer = 0;  // ธีมที่เลือกจากเมนู Theme (ใช้กับ uaTheme)
 
 procedure DrawMenuBar;
 { สีพู่กันช่อง i (0 = ยางลบ, 1..6 = PaintPalette ของเอกสาร) }
@@ -119,9 +120,9 @@ type
 
 const
   { เมนู }
-  MENU_TITLE: array[0..1] of string = ('File', 'Panel');
-  MENU_X: array[0..1] of Single = (4, 56);
-  MENU_W: array[0..1] of Single = (48, 56);
+  MENU_TITLE: array[0..2] of string = ('File', 'Panel', 'Theme');
+  MENU_X: array[0..2] of Single = (4, 56, 116);
+  MENU_W: array[0..2] of Single = (48, 56, 56);
   MENU_ITEMS: array[0..7] of string = ('New', 'Open...', 'Save', 'Save As...', '', 'Export Road...', '', 'Exit');
   MENU_KEYS: array[0..7] of string = ('Ctrl+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', '', 'Ctrl+E', '', 'Alt+F4');
   MENU_ACT: array[0..7] of TUiAction = (uaNew, uaOpen, uaSave, uaSaveAs, uaNone, uaExportRoad, uaNone, uaExit);
@@ -482,7 +483,7 @@ begin
     Col(220, 90, 20);
     FillRoundRect(it.x - 2, TB_TOP - 2, it.w + 4, TB_H + 4, 4);
   end;
-  Col(c.r, c.g, c.b);
+  ColRaw(c.r, c.g, c.b);
   FillRoundRect(it.x, TB_TOP, it.w, TB_H, 3);
   Ink;
   StrokeRoundRect(it.x, TB_TOP, it.w, TB_H, 3);
@@ -560,12 +561,22 @@ end;
 
 function MenuCount(m: Integer): Integer;
 begin
-  if m = 0 then Result := Length(MENU_ITEMS) else Result := Length(PANEL_ITEMS);
+  case m of
+    0: Result := Length(MENU_ITEMS);
+    1: Result := Length(PANEL_ITEMS);
+  else
+    Result := Length(THEMES);
+  end;
 end;
 
 function MenuText(m, i: Integer): string;
 begin
-  if m = 0 then Result := MENU_ITEMS[i] else Result := PANEL_ITEMS[i];
+  case m of
+    0: Result := MENU_ITEMS[i];
+    1: Result := PANEL_ITEMS[i];
+  else
+    Result := THEMES[i].name;
+  end;
 end;
 
 function MenuKey(m, i: Integer): string;
@@ -577,6 +588,8 @@ end;
 { รายการในเมนู Panel ที่ติ๊กอยู่ (แผงเปิดอยู่) }
 function MenuChecked(m, i: Integer): Boolean;
 begin
+  if m = 2 then
+    Exit(i = ThemeIdx);
   Result := (m = 1) and (((i = 0) and GridPanelOn) or ((i = 1) and ImagePanelOn)
             or ((i = 2) and ColorPanelOn) or ((i = 3) and AnimPanelOn));
 end;
@@ -653,7 +666,7 @@ begin
     end
     else
       Ink;
-    if MenuIdx = 1 then
+    if MenuIdx >= 1 then
     begin
       { ช่องติ๊ก }
       StrokeRect(x + 12, y + 6, 10, 10);
@@ -663,6 +676,17 @@ begin
         Line(x + 17, y + 14, x + 21, y + 7);
       end;
       Txt(x + 30, y + 7, t);
+      if MenuIdx = 2 then
+      begin
+        ColRaw(THEMES[i].paper.r, THEMES[i].paper.g, THEMES[i].paper.b);
+        FillRect(x + DD_W - 44, y + 5, 14, 12);
+        ColRaw(THEMES[i].ink.r, THEMES[i].ink.g, THEMES[i].ink.b);
+        FillRect(x + DD_W - 30, y + 5, 7, 12);
+        ColRaw(THEMES[i].accent.r, THEMES[i].accent.g, THEMES[i].accent.b);
+        FillRect(x + DD_W - 23, y + 5, 7, 12);
+        Col(120, 120, 115);
+        StrokeRect(x + DD_W - 44, y + 5, 28, 12);
+      end;
     end
     else
       Txt(x + 14, y + 7, t);
@@ -1168,7 +1192,7 @@ begin
       Col(220, 90, 20);
       FillRoundRect(x + 58 + i * 26, y + 114, 24, 22, 4);
     end;
-    Col(GRID_COLORS[i].r, GRID_COLORS[i].g, GRID_COLORS[i].b);
+    ColRaw(GRID_COLORS[i].r, GRID_COLORS[i].g, GRID_COLORS[i].b);
     FillRoundRect(x + 60 + i * 26, y + 116, 20, 18, 3);
     Ink;
     StrokeRoundRect(x + 60 + i * 26, y + 116, 20, 18, 3);
@@ -1333,7 +1357,7 @@ begin
     Txt(x + SL_X + SL_W + 10, ty + 2, Format('%3d', [v]));
   end;
   { ตัวอย่างสี }
-  Col(c.r, c.g, c.b);
+  ColRaw(c.r, c.g, c.b);
   FillRoundRect(x + 272, y + 64, 26, 56, 4);
   Ink;
   StrokeRoundRect(x + 272, y + 64, 26, 56, 4);
@@ -1583,6 +1607,11 @@ begin
     if i >= 0 then
       if c = 0 then
         act := MENU_ACT[i]
+      else if c = 2 then
+      begin
+        PickedTheme := i;
+        act := uaTheme;
+      end
       else
         case i of
           0: GridPanelOn := not GridPanelOn;

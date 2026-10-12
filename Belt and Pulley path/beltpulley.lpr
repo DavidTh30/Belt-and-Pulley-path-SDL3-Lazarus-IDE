@@ -856,7 +856,7 @@ begin
   y0 := DBG_Y + 3;
   x1 := DBG_X + DBG_W - 3;
   y1 := DBG_Y + DBG_H - 3;
-  Col(GridColor.r, GridColor.g, GridColor.b);
+  ColDoc(GridColor, DEFAULT_GRID_COLOR);
   case GridStyle of
     0, 1:
       begin
@@ -974,7 +974,7 @@ begin
   end;
   if BeltT >= 2 then
   begin
-    Col(BeltColor.r, BeltColor.g, BeltColor.b);
+    ColDoc(BeltColor, DEFAULT_BELT_COLOR);
     ArcBand(cx, cy, re - BeltT / 2, re + BeltT / 2, a0, a1);
     Ink;
     ArcLine(cx, cy, re - BeltT / 2, a0, a1);
@@ -1011,7 +1011,7 @@ begin
   h := BeltT / 2;
   nx := -(pb.y - pa.y) / L * h;
   ny := (pb.x - pa.x) / L * h;
-  Col(BeltColor.r, BeltColor.g, BeltColor.b);
+  ColDoc(BeltColor, DEFAULT_BELT_COLOR);
   Quad(Pt(pa.x + nx, pa.y + ny), Pt(pb.x + nx, pb.y + ny), Pt(pb.x - nx, pb.y - ny), Pt(pa.x - nx, pa.y - ny));
   Flush;
   if ok then Ink else Col(220, 40, 40);
@@ -1045,7 +1045,7 @@ begin
     s0 := (i / PAINT_N + OffF) * BeltLen;
     s1 := (j / PAINT_N + OffF) * BeltLen;
     pc := PaintRgb(c);
-    Col(pc.r, pc.g, pc.b);
+    ColRaw(pc.r, pc.g, pc.b);
     n := Max(1, Ceil((s1 - s0) / 3));
     for k := 0 to n do
     begin
@@ -1116,7 +1116,7 @@ begin
   else
   begin
     pc := PaintRgb(PaintColor);
-    Col(pc.r, pc.g, pc.b);
+    ColRaw(pc.r, pc.g, pc.b);
   end;
   DashedCircle(MouseX, MouseY, BrushR + BeltT / 2);
   Line(MouseX - 3, MouseY, MouseX + 3, MouseY);
@@ -1140,7 +1140,7 @@ var
   w: Single;
 begin
   Panel(DBG_X, DBG_Y, DBG_W, DBG_H);
-  Col(ViewColor.r, ViewColor.g, ViewColor.b);          // สีพื้นของ View (ตั้งในแผง COLOR)
+  ColDoc(ViewColor, DEFAULT_VIEW_COLOR);              // สีพื้นของ View (ตั้งในแผง COLOR)
   FillRoundRect(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2, 6);
   SetClip(DBG_X + 1, DBG_Y + 1, DBG_W - 2, DBG_H - 2);
   DrawBackground;
@@ -1498,6 +1498,49 @@ begin
   if wheelNode >= 0 then
     tr[wheelNode] := EnsureRange(Nodes[wheelNode].r + wheelDelta, 8, 150);
   MoveNodesTo(tx, ty, tr);
+end;
+
+{ ---------- ธีม (จำไว้ในโฟลเดอร์ตั้งค่าของผู้ใช้ ไม่ใช่ในเอกสาร) ---------- }
+
+function ThemeFile: string;
+begin
+  Result := GetAppConfigDir(False) + 'theme.cfg';
+end;
+
+procedure LoadThemePref;
+var
+  L: TStringList;
+begin
+  if not FileExists(ThemeFile) then Exit;
+  L := TStringList.Create;
+  try
+    try
+      L.LoadFromFile(ThemeFile);
+      if L.Count > 0 then SetTheme(FindTheme(Trim(L[0])));
+    except
+      // ไฟล์เสียก็ใช้ธีมตั้งต้น
+    end;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure SaveThemePref;
+var
+  L: TStringList;
+begin
+  L := TStringList.Create;
+  try
+    try
+      ForceDirectories(GetAppConfigDir(False));
+      L.Add(THEMES[ThemeIdx].name);
+      L.SaveToFile(ThemeFile);
+    except
+      // บันทึกไม่ได้ก็แค่ไม่จำธีม
+    end;
+  finally
+    L.Free;
+  end;
 end;
 
 { ---------- เอกสาร / ไฟล์ ---------- }
@@ -2383,6 +2426,11 @@ begin
     uaImageOpen: DoOpenImage;
     uaImageBake: DoBakeImage;
     uaExportRoad: DoExportRoad;
+    uaTheme:
+      begin
+        SetTheme(PickedTheme);
+        SaveThemePref;
+      end;
     uaImageClear:
       begin
         ClearBackground;
@@ -2443,7 +2491,6 @@ var
   act: TUiAction;
   vp: TSDL_Rect;
   ctrl, shift: Boolean;
-  demoFile: string;
   defX, defY, defR: array[0..DEF_COUNT - 1] of Single;
 
 begin
@@ -2487,9 +2534,8 @@ begin
   end;
   InitScript(defX, defY, defR);
 
-  { เปิด demo.txt ข้าง ๆ exe เป็นเอกสารแรก (สร้างให้ถ้ายังไม่มี) แล้วเล่นวนทันที }
-  demoFile := ExtractFilePath(ParamStr(0)) + 'demo.txt';
-  EnsureDemoFile(demoFile);      // ตัวอย่างยังอยู่ข้าง exe เปิดได้จาก File > Open
+  { ธีมที่ใช้ครั้งก่อน แล้วเริ่มด้วยเอกสารใหม่ }
+  LoadThemePref;
   { เริ่มโปรแกรมด้วยเอกสารใหม่ (เหมือนเลือก File > New) }
   ClearScript(True);
   DocFile := '';
