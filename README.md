@@ -1,6 +1,8 @@
 # Belt-and-Pulley-path-SDL3-Lazarus-IDE
 Belt and Pulley path SDL3 Lazarus IDE
 
+<img src="gif%20coil.gif" width="400" height="400">
+
 Lazarus-SDL-3.0-Package: https://github.com/sechshelme/Lazarus-SDL-3.0-Packages-and-Examples
 
 https://github.com/libsdl-org
